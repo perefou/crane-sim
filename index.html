@@ -22,13 +22,6 @@
 </head>
 <body class="text-white relative select-none focus:outline-none" tabindex="0">
 
-    <!-- FIXED: Using fixed positioning and z-[9999] to ensure it always covers the screen and catches clicks -->
-    <div id="focus-overlay" class="fixed inset-0 w-full h-full bg-slate-900/80 z-[9999] flex flex-col items-center justify-center text-white cursor-pointer backdrop-blur-sm transition-opacity duration-300">
-        <svg class="w-16 h-16 mb-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
-        <h2 class="text-3xl font-bold text-glow mb-2">Click or Press Any Key</h2>
-        <p class="text-slate-300">Interact with the simulation to enable controls.</p>
-    </div>
-
     <div class="absolute top-4 left-4 panel p-6 rounded-2xl shadow-2xl border border-slate-600 w-96 pointer-events-none transition-all z-40">
         <div class="flex justify-between items-start mb-1">
             <h1 class="text-2xl font-bold text-blue-400 text-glow">Heavy Rig Sim</h1>
@@ -340,24 +333,6 @@
         loadCable.visible = false;
         scene.add(loadCable);
 
-        // --- OVERLAY DISMISSAL LOGIC ---
-        const overlay = document.getElementById('focus-overlay');
-        
-        const dismissOverlay = () => {
-            if (overlay.style.pointerEvents === 'none') return;
-            overlay.style.opacity = '0';
-            overlay.style.pointerEvents = 'none'; // Instantly prevent further clicks
-            setTimeout(() => { overlay.style.display = 'none'; }, 300);
-            document.body.focus();
-        };
-
-        // Aggressively listen for any interaction to dismiss the screen
-        overlay.addEventListener('click', dismissOverlay);
-        overlay.addEventListener('touchstart', dismissOverlay, { passive: true });
-        window.addEventListener('keydown', (e) => {
-            if (overlay.style.display !== 'none') dismissOverlay();
-        });
-
         renderer.domElement.addEventListener('mousedown', () => {
             document.body.focus();
         });
@@ -450,11 +425,11 @@
                 if (role === 'Viewer') {
                     isHost = false;
                     socket.on('stateUpdate', (state) => {
-                        pivotPos.copy(state.pivotPos);
+                        if (state.pivotPos) pivotPos.set(state.pivotPos.x, state.pivotPos.y, state.pivotPos.z);
                         theta = state.theta;
                         yaw = state.yaw;
                         dcw = state.dcw;
-                        loadPos.copy(state.loadPos);
+                        if (state.loadPos) loadPos.set(state.loadPos.x, state.loadPos.y, state.loadPos.z);
                         isHooked = state.isHooked;
                         loadYaw = state.loadYaw;
                         tau_total = state.tau_total;
@@ -467,8 +442,13 @@
             }
         }
 
-        document.getElementById('btn-host').addEventListener('click', () => initNetwork('Host'));
-        document.getElementById('btn-join').addEventListener('click', () => initNetwork('Viewer'));
+        const handleHost = (e) => { e.preventDefault(); initNetwork('Host'); };
+        const handleJoin = (e) => { e.preventDefault(); initNetwork('Viewer'); };
+
+        document.getElementById('btn-host').addEventListener('click', handleHost);
+        document.getElementById('btn-host').addEventListener('touchstart', handleHost, {passive: false});
+        document.getElementById('btn-join').addEventListener('click', handleJoin);
+        document.getElementById('btn-join').addEventListener('touchstart', handleJoin, {passive: false});
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -528,9 +508,10 @@
                 }
 
                 if (gp) {
-                    if (Math.abs(gp.axes[0]) > 0.15) padAx = gp.axes[0] * TRANS_ACCEL;
-                    if (Math.abs(gp.axes[1]) > 0.15) padAz = gp.axes[1] * TRANS_ACCEL;
-                    if (Math.abs(gp.axes[3]) > 0.15) padAy = -gp.axes[3] * TRANS_ACCEL; 
+                    // Increased deadzone to 0.25 to prevent "stick drift" from causing the crane to fall
+                    if (Math.abs(gp.axes[0]) > 0.25) padAx = gp.axes[0] * TRANS_ACCEL;
+                    if (Math.abs(gp.axes[1]) > 0.25) padAz = gp.axes[1] * TRANS_ACCEL;
+                    if (Math.abs(gp.axes[3]) > 0.25) padAy = -gp.axes[3] * TRANS_ACCEL; 
 
                     padRotCCW = gp.buttons[4]?.pressed || false;
                     padRotCW = gp.buttons[5]?.pressed || false;
@@ -565,8 +546,8 @@
                 
                 // CRANE BRAKE: Aggressive deceleration when hoist buttons are released
                 if (ay === 0) {
-                    pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), TRANS_FRICTION * 5.0 * dt);
-                    if (Math.abs(pivotVel.y) < 0.1) pivotVel.y = 0; // Snap to absolute zero to hold altitude
+                    pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), TRANS_ACCEL * 4.0 * dt);
+                    if (Math.abs(pivotVel.y) < 0.8) pivotVel.y = 0; // Snap to absolute zero securely
                 }
                 
                 if (az === 0) pivotVel.z -= Math.sign(pivotVel.z) * Math.min(Math.abs(pivotVel.z), TRANS_FRICTION * dt);
