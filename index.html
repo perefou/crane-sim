@@ -289,7 +289,7 @@
                     'rig.obj', 
                     function (object) {
                         placeholderRig.visible = false; // Hide fallback blocks
-                        object.scale.set(0.00328, 0.00328, 0.00328); // mm to feet
+                        object.scale.set(0.00328, 0.00328, 0.00328); // CORRECTED: mm to feet
                         
                         // IF YOUR RIG IS POINTING BACKWARDS, UNCOMMENT THIS LINE:
                         // object.rotation.y = Math.PI; 
@@ -320,7 +320,7 @@
                     'rig.obj', 
                     function (object) {
                         placeholderRig.visible = false;
-                        object.scale.set(0.0328, 0.0328, 0.0328);
+                        object.scale.set(0.00328, 0.00328, 0.00328); // CORRECTED: mm to feet
                         object.traverse(function (child) {
                             if (child.isMesh) {
                                 child.material = yellowPaint;
@@ -351,10 +351,11 @@
         // ========================================================
         // 3. COUNTERWEIGHT
         // ========================================================
-        const cwGeo = new THREE.BoxGeometry(4, 4, 4);
+        // 48" Long (4ft), 36" High (3ft), 28" Width (2.33ft)
+        const cwGeo = new THREE.BoxGeometry(4, 3, 2.33);
         const cwMat = new THREE.MeshStandardMaterial({ color: 0x882222, metalness: 0.3, roughness: 0.7 });
         const counterweight = new THREE.Mesh(cwGeo, cwMat);
-        counterweight.position.set(dcw, -10, 0);
+        counterweight.position.set(dcw, -14, 0); // Moved 4 feet lower (from -10 to -14)
         counterweight.castShadow = true;
         deviceGroup.add(counterweight);
 
@@ -712,7 +713,7 @@
                 }
 
                 const hookDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y) * Math.sin(theta);
-                const cwDistX = dcw * Math.cos(theta) - (-10) * Math.sin(theta);
+                const cwDistX = dcw * Math.cos(theta) - (-14) * Math.sin(theta); // Updated from -10 to -14
                 const devDistX = -2 * Math.cos(theta) - (-8) * Math.sin(theta);
 
                 const tau_hook = -hookDistX * M_HOOK * g;
@@ -724,7 +725,7 @@
                 tau_total = tau_gravity + tau_damping;
 
                 const r2_hook = (RIG_HOOK_X)**2 + (RIG_HOOK_Y)**2; 
-                const r2_cw = dcw**2 + (-10)**2;    
+                const r2_cw = dcw**2 + (-14)**2; // Updated from -10 to -14
                 const r2_dev = (-2)**2 + (-8)**2;    
 
                 const I_hook = M_HOOK * r2_hook;
