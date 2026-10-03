@@ -112,9 +112,8 @@
         let omega = 0;      
         let yaw = 0;        
         let yawVelocity = 0;
-        let dcw = 3.36;     
+        let dcw = -2.0; // START FORWARD (-2 feet) to balance the bare hook     
         let isHooked = false;
-        let tau_total = 0;  
         
         // Raised starting height from 16 to 30 so the hook starts above ground
         let pivotPos = new THREE.Vector3(0, 30, 0); 
@@ -717,8 +716,9 @@
                 }
 
                 const hookDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y) * Math.sin(theta);
-                const cwDistX = dcw * Math.cos(theta) - (-16.5) * Math.sin(theta); // Updated from -14 to -16.5
-                const devDistX = -2 * Math.cos(theta) - (-8) * Math.sin(theta);
+                const cwDistX = dcw * Math.cos(theta) - (-16.5) * Math.sin(theta);
+                // FIXED: Changed CG from -2 (front-heavy) to +1.75 (back-heavy)
+                const devDistX = 1.75 * Math.cos(theta) - (-8) * Math.sin(theta); 
 
                 const tau_hook = -hookDistX * M_HOOK * g;
                 const tau_cw   = -cwDistX * M_CW * g;
