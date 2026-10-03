@@ -166,7 +166,11 @@
         // Who controls what. Offline: everything. Host (operator): move + hoist.
         // Viewer: counterweight, rotation, hook (sent to the host, which runs the physics).
         let canMove = true, canRig = true;
-        const remoteInput = { cwFwd: false, cwBack: false, rotCCW: false, rotCW: false };
+        // Viewer input as a bitmask: 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW. The host holds each bit
+        // for at least 150 ms after it arrives, so a quick tap still moves the rig.
+        let remoteMask = 0;
+        const remoteHold = { 1: 0, 2: 0, 4: 0, 8: 0 };
+        const remoteBit = (bit) => (remoteMask & bit) !== 0 || performance.now() < remoteHold[bit];
         let lastInputMask = 0;
 
         function sendRigInput() {
@@ -227,8 +231,40 @@
         const PLATFORM_EYE = new THREE.Vector3(-19.8, 105.5, 0); // platforms span x -40..-20
         let viewMode = 'orbit';
 
+        // Floor/platform views follow the load until you drag to look around (mouse or touch).
+        // Pressing the view button/key again, or L, snaps back to following the load.
+        camera.rotation.order = 'YXZ';
+        let lookFree = false, lookYaw = 0, lookPitch = 0, lookDrag = null;
+
+        function startFreeLook() {
+            const d = new THREE.Vector3();
+            camera.getWorldDirection(d);
+            lookYaw = Math.atan2(-d.x, -d.z);
+            lookPitch = Math.asin(d.y);
+            lookFree = true;
+        }
+        const isFixedView = () => viewMode === 'floor' || viewMode === 'platform';
+
+        renderer.domElement.addEventListener('pointerdown', (e) => {
+            if (isFixedView()) lookDrag = { x: e.clientX, y: e.clientY, moved: false };
+        });
+        window.addEventListener('pointermove', (e) => {
+            if (!lookDrag) return;
+            const dx = e.clientX - lookDrag.x, dy = e.clientY - lookDrag.y;
+            if (!lookDrag.moved && Math.hypot(dx, dy) < 4) return; // ignore tiny jitters
+            lookDrag.moved = true;
+            if (!lookFree) startFreeLook();
+            lookYaw += dx * 0.005;
+            lookPitch = Math.max(-1.5, Math.min(1.5, lookPitch + dy * 0.005));
+            lookDrag.x = e.clientX;
+            lookDrag.y = e.clientY;
+        });
+        window.addEventListener('pointerup', () => { lookDrag = null; });
+        window.addEventListener('pointercancel', () => { lookDrag = null; });
+
         function setView(mode) {
             viewMode = mode;
+            lookFree = false;
             scene.fog.density = (mode === 'bird') ? 0.0005 : 0.005; // no haze when viewed from far above
             if (mode === 'bird') {
                 camera.position.set(-12, 200, 170);
@@ -263,6 +299,7 @@
         }
         window.addEventListener('keydown', (e) => {
             if (e.target && e.target.tagName === 'INPUT') return;
+            if (e.key.toLowerCase() === 'l' && isFixedView()) { lookFree = false; return; }
             const mode = { '0': 'bird', '1': 'floor', '2': 'platform' }[e.key];
             if (mode && document.getElementById('btn-view-' + mode).style.display !== 'none') setView(mode);
         });
@@ -524,11 +561,27 @@
             if (key === ' ') keys.spaceTriggered = false;
         }, { passive: false });
 
+        // A press counts for at least MIN_PRESS_MS, so a quick tap is not lost between two frames.
+        const MIN_PRESS_MS = 150;
         const setupBtn = (id, stateKey, group) => {
             const btn = document.getElementById(id);
             if (!btn) return;
-            const enable = (e) => { if (group === 'move' ? canMove : canRig) { e.preventDefault(); btnStates[stateKey] = true; sendRigInput(); } };
-            const disable = (e) => { e.preventDefault(); btnStates[stateKey] = false; sendRigInput(); };
+            let pressedAt = 0, releaseTimer = null;
+            const enable = (e) => {
+                if (group === 'move' ? canMove : canRig) {
+                    e.preventDefault();
+                    clearTimeout(releaseTimer);
+                    btnStates[stateKey] = true;
+                    pressedAt = performance.now();
+                    sendRigInput();
+                }
+            };
+            const disable = (e) => {
+                if (!btnStates[stateKey]) return; // this release belongs to some other element
+                e.preventDefault();
+                const wait = Math.max(0, MIN_PRESS_MS - (performance.now() - pressedAt));
+                releaseTimer = setTimeout(() => { btnStates[stateKey] = false; sendRigInput(); }, wait);
+            };
             btn.addEventListener('mousedown', enable);
             btn.addEventListener('touchstart', enable, {passive: false});
             window.addEventListener('mouseup', disable); 
@@ -612,10 +665,9 @@
                 if (role === 'Host') {
                     // Combined input of all viewers: bit 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW
                     socket.on('input', (m) => {
-                        remoteInput.cwFwd = !!(m & 1);
-                        remoteInput.cwBack = !!(m & 2);
-                        remoteInput.rotCCW = !!(m & 4);
-                        remoteInput.rotCW = !!(m & 8);
+                        const now = performance.now();
+                        for (const bit of [1, 2, 4, 8]) if (m & bit) remoteHold[bit] = now + 150;
+                        remoteMask = m;
                     });
                     socket.on('hook', () => toggleHook());
                 }
@@ -762,10 +814,10 @@
                 }
 
                 // Counterweight / rotation: local when offline, from the viewers when hosting
-                const inRotCCW = canRig ? (btnStates.rotCCW || padRotCCW || keys['arrowleft']) : remoteInput.rotCCW;
-                const inRotCW  = canRig ? (btnStates.rotCW  || padRotCW  || keys['arrowright']) : remoteInput.rotCW;
-                const inCwFwd  = canRig ? (btnStates.cwFwd  || padCwFwd  || keys['q']) : remoteInput.cwFwd;
-                const inCwBack = canRig ? (btnStates.cwBack || padCwBack || keys['e']) : remoteInput.cwBack;
+                const inRotCCW = canRig ? (btnStates.rotCCW || padRotCCW || keys['arrowleft']) : remoteBit(4);
+                const inRotCW  = canRig ? (btnStates.rotCW  || padRotCW  || keys['arrowright']) : remoteBit(8);
+                const inCwFwd  = canRig ? (btnStates.cwFwd  || padCwFwd  || keys['q']) : remoteBit(1);
+                const inCwBack = canRig ? (btnStates.cwBack || padCwBack || keys['e']) : remoteBit(2);
 
                 // 1. Horizontal Physics
                 pivotVel.x += ax * dt;
@@ -1011,8 +1063,10 @@
             requestAnimationFrame(animate);
             const dt = clock.getDelta();
             updatePhysics(dt);
-            if (viewMode === 'floor' || viewMode === 'platform') camera.lookAt(loadPos);
-            else controls.update();
+            if (isFixedView()) {
+                if (lookFree) camera.rotation.set(lookPitch, lookYaw, 0);
+                else camera.lookAt(loadPos);
+            } else controls.update();
 
             deviceGroup.updateMatrixWorld(); 
             pipCamera.lookAt(loadPos.x, loadPos.y - 4, loadPos.z);
