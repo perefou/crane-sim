@@ -116,7 +116,8 @@
         let isHooked = false;
         let tau_total = 0;  
         
-        let pivotPos = new THREE.Vector3(0, 16, 0); 
+        // Raised starting height from 16 to 30 so the hook starts above ground
+        let pivotPos = new THREE.Vector3(0, 30, 0); 
         let pivotVel = new THREE.Vector3(0, 0, 0);
         const MAX_TRANS_SPEED = 5.0; 
         const TRANS_ACCEL = 8.0; 
@@ -239,7 +240,8 @@
         deviceGroup.rotation.order = "YXZ"; 
         scene.add(deviceGroup);
         
-        pipCamera.position.set(0, -13, 0); 
+        // Moved camera 16.68ft down, 5.5ft forward (-X direction), and 1.3ft right (Z direction)
+        pipCamera.position.set(-5.5, -16.68, 1.3); 
         deviceGroup.add(pipCamera);
 
         const yellowPaint = new THREE.MeshStandardMaterial({ color: 0xffaa00, roughness: 0.4, metalness: 0.2 });
@@ -355,7 +357,7 @@
         const cwGeo = new THREE.BoxGeometry(4, 3, 2.33);
         const cwMat = new THREE.MeshStandardMaterial({ color: 0x882222, metalness: 0.3, roughness: 0.7 });
         const counterweight = new THREE.Mesh(cwGeo, cwMat);
-        counterweight.position.set(dcw, -14, 0); // Moved 4 feet lower (from -10 to -14)
+        counterweight.position.set(dcw, -16.5, 0); // Moved to 16.5 feet under origin
         counterweight.castShadow = true;
         deviceGroup.add(counterweight);
 
@@ -619,8 +621,9 @@
 
                 pivotPos.addScaledVector(pivotVel, dt);
 
-                if (pivotPos.y < 12) {
-                    pivotPos.y = 12;
+                // Raised the floor limit from 12 to 20 to keep the 18.2ft hook out of the dirt
+                if (pivotPos.y < 20) {
+                    pivotPos.y = 20;
                     if (pivotVel.y < 0) pivotVel.y = 0;
                 }
 
@@ -713,7 +716,7 @@
                 }
 
                 const hookDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y) * Math.sin(theta);
-                const cwDistX = dcw * Math.cos(theta) - (-14) * Math.sin(theta); // Updated from -10 to -14
+                const cwDistX = dcw * Math.cos(theta) - (-16.5) * Math.sin(theta); // Updated from -14 to -16.5
                 const devDistX = -2 * Math.cos(theta) - (-8) * Math.sin(theta);
 
                 const tau_hook = -hookDistX * M_HOOK * g;
@@ -725,7 +728,7 @@
                 tau_total = tau_gravity + tau_damping;
 
                 const r2_hook = (RIG_HOOK_X)**2 + (RIG_HOOK_Y)**2; 
-                const r2_cw = dcw**2 + (-14)**2; // Updated from -10 to -14
+                const r2_cw = dcw**2 + (-16.5)**2; // Updated from -14 to -16.5
                 const r2_dev = (-2)**2 + (-8)**2;    
 
                 const I_hook = M_HOOK * r2_hook;
