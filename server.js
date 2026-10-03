@@ -7,46 +7,76 @@ const io = require('socket.io')(http, { transports: ['websocket'] });
 // Only the public/ folder is served (index.html, rig.obj, rig.mtl), not server.js or package.json.
 app.use(express.static(path.join(__dirname, 'public')));
 
-// room name -> host socket id
+// room name -> { host: socket id, viewers: Map(socket id -> input bitmask) }
+// Input bitmask: 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW
 const rooms = new Map();
 const validRoom = (r) => typeof r === 'string' && /^[\w-]{1,20}$/.test(r);
+
+const combinedInput = (room) => {
+  let mask = 0;
+  for (const m of room.viewers.values()) mask |= m;
+  return mask;
+};
 
 io.on('connection', (socket) => {
   console.log('A user connected!');
 
   // A host claims a room. Only the host of a room may broadcast state to it.
-  socket.on('hostRoom', (room, ack) => {
+  socket.on('hostRoom', (name, ack) => {
     if (typeof ack !== 'function') return;
-    if (!validRoom(room)) return ack({ ok: false, error: 'Invalid room code.' });
-    const current = rooms.get(room);
-    if (current && current !== socket.id) return ack({ ok: false, error: 'Room already has a host.' });
-    rooms.set(room, socket.id);
-    socket.data.hostRoom = room;
-    socket.join(room);
+    if (!validRoom(name)) return ack({ ok: false, error: 'Invalid room code.' });
+    const room = rooms.get(name);
+    if (room && room.host !== socket.id) return ack({ ok: false, error: 'Room already has a host.' });
+    if (!room) rooms.set(name, { host: socket.id, viewers: new Map() });
+    socket.data.hostRoom = name;
+    socket.join(name);
     ack({ ok: true });
   });
 
-  socket.on('joinRoom', (room, ack) => {
+  socket.on('joinRoom', (name, ack) => {
     if (typeof ack !== 'function') return;
-    if (!validRoom(room)) return ack({ ok: false, error: 'Invalid room code.' });
-    if (!rooms.has(room)) return ack({ ok: false, error: 'No host in that room yet.' });
-    socket.join(room);
+    if (!validRoom(name)) return ack({ ok: false, error: 'Invalid room code.' });
+    if (!rooms.has(name)) return ack({ ok: false, error: 'No host in that room yet.' });
+    socket.data.viewerRoom = name;
+    socket.join(name);
     ack({ ok: true });
   });
 
   // Host sends physics data (flat array), relayed to the viewers in the same room.
   socket.on('stateUpdate', (data) => {
-    const room = socket.data.hostRoom;
-    if (!room || !Array.isArray(data) || data.length !== 12) return;
-    socket.volatile.to(room).emit('stateUpdate', data);
+    const name = socket.data.hostRoom;
+    if (!name || !Array.isArray(data) || data.length !== 12) return;
+    socket.volatile.to(name).emit('stateUpdate', data);
+  });
+
+  // A viewer sends which counterweight/rotation buttons it holds; the host gets the combined mask.
+  socket.on('input', (mask) => {
+    const room = rooms.get(socket.data.viewerRoom);
+    if (!room || !Number.isInteger(mask) || mask < 0 || mask > 15) return;
+    room.viewers.set(socket.id, mask);
+    io.to(room.host).emit('input', combinedInput(room));
+  });
+
+  // A viewer asks the host to hook/unhook the load.
+  socket.on('hook', () => {
+    const room = rooms.get(socket.data.viewerRoom);
+    if (room) io.to(room.host).emit('hook');
   });
 
   socket.on('disconnect', () => {
     console.log('A user disconnected');
-    const room = socket.data.hostRoom;
-    if (room && rooms.get(room) === socket.id) {
-      rooms.delete(room);
-      io.to(room).emit('hostLeft');
+
+    const hostName = socket.data.hostRoom;
+    const hostedRoom = rooms.get(hostName);
+    if (hostedRoom && hostedRoom.host === socket.id) {
+      rooms.delete(hostName);
+      io.to(hostName).emit('hostLeft');
+    }
+
+    // Release this viewer's buttons so nothing stays stuck on the host.
+    const viewedRoom = rooms.get(socket.data.viewerRoom);
+    if (viewedRoom && viewedRoom.viewers.delete(socket.id)) {
+      io.to(viewedRoom.host).emit('input', combinedInput(viewedRoom));
     }
   });
 });

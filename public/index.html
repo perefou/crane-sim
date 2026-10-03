@@ -44,6 +44,10 @@
                 <span class="text-slate-400">Counterweight:</span>
                 <span id="ui-cw" class="font-mono bg-slate-800 px-2 py-1 rounded">3.9 ft</span>
             </div>
+            <div id="row-remote" class="flex justify-between items-center" style="display:none">
+                <span class="text-slate-400">Rigger input:</span>
+                <span id="ui-remote" class="font-mono bg-slate-800 px-2 py-1 rounded text-xs">none</span>
+            </div>
             <div class="flex justify-between items-center border-t border-slate-600 pt-2 mt-2">
                 <span class="text-slate-400">Network:</span>
                 <span id="ui-network" class="font-bold text-slate-400">Offline (Local)</span>
@@ -62,6 +66,13 @@
         <p id="multi-status" class="text-xs text-center text-slate-400 mt-2">Waiting for selection...</p>
     </div>
 
+    <!-- Camera views (buttons shown per role) -->
+    <div id="view-panel" class="absolute top-4 left-1/2 -translate-x-1/2 flex gap-2 z-40 select-none">
+        <button id="btn-view-bird" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Bird (0)</button>
+        <button id="btn-view-floor" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Floor (1)</button>
+        <button id="btn-view-platform" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Platform (2)</button>
+    </div>
+
     <!-- Success Message -->
     <div id="success-msg" class="absolute top-1/4 left-1/2 transform -translate-x-1/2 panel px-8 py-4 rounded-xl shadow-2xl border border-green-500 opacity-0 transition-opacity duration-500 pointer-events-none text-center z-40">
         <h2 class="text-3xl font-bold text-green-400">Delivery Successful!</h2>
@@ -75,7 +86,7 @@
     </div>
 
     <!-- Mobile D-Pad (Bottom Left) -->
-    <div class="absolute bottom-6 left-6 grid grid-cols-3 gap-2 z-40 select-none w-48">
+    <div id="dpad" class="absolute bottom-6 left-6 grid grid-cols-3 gap-2 z-40 select-none w-48">
         <div></div>
         <button id="btn-trans-back" class="panel w-14 h-14 rounded-full border border-slate-500 text-white font-bold flex items-center justify-center active:bg-slate-600 touch-manipulation">W</button>
         <div></div>
@@ -110,7 +121,8 @@
         const M_DEV = 13000; 
         
         let theta = 0;      
-        let omega = 0;      
+        let omega = 0;
+        let tau_total = 0;
         let yaw = 0;        
         let yawVelocity = 0;
         let dcw = -2.0; // START FORWARD (-2 feet) to balance the bare hook     
@@ -141,11 +153,58 @@
         window.addEventListener('blur', () => {
             for (let k in keys) keys[k] = false;
             for (let k in btnStates) btnStates[k] = false;
+            sendRigInput();
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                for (let k in keys) keys[k] = false;
+                for (let k in btnStates) btnStates[k] = false;
+                sendRigInput();
+            }
         });
 
         let socket = null;
-        let isHost = true; 
+        let isHost = true;
         let networkRole = "Offline";
+
+        // Who controls what. Offline: everything. Host (operator): move + hoist.
+        // Viewer: counterweight, rotation, hook (sent to the host, which runs the physics).
+        let canMove = true, canRig = true;
+        // Viewer input as a bitmask: 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW. The host holds each bit
+        // for at least 150 ms after it arrives, so a quick tap still moves the rig.
+        let remoteMask = 0;
+        const remoteHold = { 1: 0, 2: 0, 4: 0, 8: 0 };
+        const remoteBit = (bit) => (remoteMask & bit) !== 0 || performance.now() < remoteHold[bit];
+        let lastInputMask = 0;
+
+        function sendRigInput() {
+            if (networkRole !== 'Viewer' || !socket || !socket.connected) return;
+            const mask = ((btnStates.cwFwd || keys['q']) ? 1 : 0)
+                       | ((btnStates.cwBack || keys['e']) ? 2 : 0)
+                       | ((btnStates.rotCCW || keys['arrowleft']) ? 4 : 0)
+                       | ((btnStates.rotCW || keys['arrowright']) ? 8 : 0);
+            if (mask !== lastInputMask) {
+                lastInputMask = mask;
+                socket.emit('input', mask);
+            }
+        }
+
+        // Viewer-side notice when the host stops sending (host tab in the background, or host left).
+        let lastStateAt = 0, hostGone = false, netRoom = '', netJoined = false;
+        function updateHostStatus() {
+            if (!netJoined) return;
+            const stale = hostGone || performance.now() - lastStateAt > 1500;
+            const txt = !stale ? `Online (Viewer: ${netRoom})`
+                      : hostGone ? 'Host left' : 'Host paused (tab hidden?)';
+            if (uiNetwork.textContent !== txt) uiNetwork.textContent = txt;
+        }
+
+        function applyRoleUI() {
+            const show = (id, on) => { document.getElementById(id).style.display = on ? '' : 'none'; };
+            show('dpad', canMove);
+            ['btn-hoist-up', 'btn-hoist-down'].forEach(id => show(id, canMove));
+            ['btn-cw-fwd', 'btn-cw-back', 'btn-rot-ccw', 'btn-rot-cw', 'btn-hook'].forEach(id => show(id, canRig));
+        }
 
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
@@ -167,6 +226,87 @@
         controls.target.set(-15, 10, 0);
         controls.enableDamping = true;
         controls.maxPolarAngle = Math.PI / 2 - 0.01;
+
+        // --- CAMERA VIEWS ---
+        // orbit: free camera (offline default). bird: operator overview, still orbitable.
+        // floor: rigger standing on the ground near the load. platform: rigger on the edge of the
+        // lower platform, in the 8 ft gap between the two platforms. Floor/platform look at the load.
+        const FLOOR_EYE_Y = 5.5;
+        const PLATFORM_EYE = new THREE.Vector3(-19.8, 104.5, 0); // platforms span x -40..-20
+        let viewMode = 'orbit';
+
+        // Floor/platform views follow the load until you drag to look around (mouse or touch).
+        // Pressing the view button/key again, or L, snaps back to following the load.
+        camera.rotation.order = 'YXZ';
+        let lookFree = false, lookYaw = 0, lookPitch = 0, lookDrag = null;
+
+        function startFreeLook() {
+            const d = new THREE.Vector3();
+            camera.getWorldDirection(d);
+            lookYaw = Math.atan2(-d.x, -d.z);
+            lookPitch = Math.asin(d.y);
+            lookFree = true;
+        }
+        const isFixedView = () => viewMode === 'floor' || viewMode === 'platform';
+
+        renderer.domElement.addEventListener('pointerdown', (e) => {
+            if (isFixedView()) lookDrag = { x: e.clientX, y: e.clientY, moved: false };
+        });
+        window.addEventListener('pointermove', (e) => {
+            if (!lookDrag) return;
+            const dx = e.clientX - lookDrag.x, dy = e.clientY - lookDrag.y;
+            if (!lookDrag.moved && Math.hypot(dx, dy) < 4) return; // ignore tiny jitters
+            lookDrag.moved = true;
+            if (!lookFree) startFreeLook();
+            lookYaw += dx * 0.005;
+            lookPitch = Math.max(-1.5, Math.min(1.5, lookPitch + dy * 0.005));
+            lookDrag.x = e.clientX;
+            lookDrag.y = e.clientY;
+        });
+        window.addEventListener('pointerup', () => { lookDrag = null; });
+        window.addEventListener('pointercancel', () => { lookDrag = null; });
+
+        function setView(mode) {
+            viewMode = mode;
+            lookFree = false;
+            scene.fog.density = (mode === 'bird') ? 0.0005 : 0.005; // no haze when viewed from far above
+            if (mode === 'bird') {
+                camera.position.set(-12, 200, 170);
+                controls.target.set(-12, 60, 0);
+                controls.enabled = true;
+                controls.update();
+            } else if (mode === 'floor') {
+                camera.position.set(loadPos.x + 14, FLOOR_EYE_Y, loadPos.z + 16);
+                controls.enabled = false;
+            } else if (mode === 'platform') {
+                camera.position.copy(PLATFORM_EYE);
+                controls.enabled = false;
+            } else {
+                camera.position.set(20, 30, 70);
+                controls.target.set(-15, 10, 0);
+                controls.enabled = true;
+                controls.update();
+            }
+            for (const m of ['bird', 'floor', 'platform']) {
+                document.getElementById('btn-view-' + m).classList.toggle('border-teal-400', m === mode);
+            }
+        }
+
+        function applyViewPanel(modes) {
+            for (const m of ['bird', 'floor', 'platform']) {
+                document.getElementById('btn-view-' + m).style.display = modes.includes(m) ? '' : 'none';
+            }
+        }
+
+        for (const m of ['bird', 'floor', 'platform']) {
+            document.getElementById('btn-view-' + m).addEventListener('click', (e) => { e.preventDefault(); setView(m); });
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.target && e.target.tagName === 'INPUT') return;
+            if (e.key.toLowerCase() === 'l' && isFixedView()) { lookFree = false; return; }
+            const mode = { '0': 'bird', '1': 'floor', '2': 'platform' }[e.key];
+            if (mode && document.getElementById('btn-view-' + mode).style.display !== 'none') setView(mode);
+        });
 
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
@@ -403,15 +543,16 @@
         scene.add(loadCable);
 
         window.addEventListener('keydown', (e) => {
-            if (!isHost) return; 
+            if (e.target && e.target.tagName === 'INPUT') return; // typing the room code
             const key = e.key.toLowerCase();
             keys[key] = true;
-            
-            if (['w', 'a', 's', 'd', ' ', 'arrowup', 'arrowdown'].includes(key)) {
+            sendRigInput();
+
+            if (['w', 'a', 's', 'd', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
                 e.preventDefault();
             }
 
-            if (key === ' ' && !keys.spaceTriggered) {
+            if (key === ' ' && canRig && !keys.spaceTriggered) {
                 keys.spaceTriggered = true;
                 toggleHook();
             }
@@ -420,33 +561,50 @@
         window.addEventListener('keyup', (e) => {
             const key = e.key.toLowerCase();
             keys[key] = false;
+            sendRigInput();
             if (key === ' ') keys.spaceTriggered = false;
         }, { passive: false });
 
-        const setupBtn = (id, stateKey) => {
+        // A press counts for at least MIN_PRESS_MS, so a quick tap is not lost between two frames.
+        const MIN_PRESS_MS = 150;
+        const setupBtn = (id, stateKey, group) => {
             const btn = document.getElementById(id);
             if (!btn) return;
-            const enable = (e) => { if(isHost) { e.preventDefault(); btnStates[stateKey] = true; } };
-            const disable = (e) => { e.preventDefault(); btnStates[stateKey] = false; };
+            let pressedAt = 0, releaseTimer = null;
+            const enable = (e) => {
+                if (group === 'move' ? canMove : canRig) {
+                    e.preventDefault();
+                    clearTimeout(releaseTimer);
+                    btnStates[stateKey] = true;
+                    pressedAt = performance.now();
+                    sendRigInput();
+                }
+            };
+            const disable = (e) => {
+                if (!btnStates[stateKey]) return; // this release belongs to some other element
+                e.preventDefault();
+                const wait = Math.max(0, MIN_PRESS_MS - (performance.now() - pressedAt));
+                releaseTimer = setTimeout(() => { btnStates[stateKey] = false; sendRigInput(); }, wait);
+            };
             btn.addEventListener('mousedown', enable);
             btn.addEventListener('touchstart', enable, {passive: false});
             window.addEventListener('mouseup', disable); 
             window.addEventListener('touchend', disable);
         };
-        setupBtn('btn-cw-fwd', 'cwFwd');
-        setupBtn('btn-cw-back', 'cwBack');
-        setupBtn('btn-rot-ccw', 'rotCCW');
-        setupBtn('btn-rot-cw', 'rotCW');
-        setupBtn('btn-trans-fwd', 'transFwd');
-        setupBtn('btn-trans-back', 'transBack');
-        setupBtn('btn-trans-left', 'transLeft');
-        setupBtn('btn-trans-right', 'transRight');
-        setupBtn('btn-hoist-up', 'hoistUp');
-        setupBtn('btn-hoist-down', 'hoistDown');
+        setupBtn('btn-cw-fwd', 'cwFwd', 'rig');
+        setupBtn('btn-cw-back', 'cwBack', 'rig');
+        setupBtn('btn-rot-ccw', 'rotCCW', 'rig');
+        setupBtn('btn-rot-cw', 'rotCW', 'rig');
+        setupBtn('btn-trans-fwd', 'transFwd', 'move');
+        setupBtn('btn-trans-back', 'transBack', 'move');
+        setupBtn('btn-trans-left', 'transLeft', 'move');
+        setupBtn('btn-trans-right', 'transRight', 'move');
+        setupBtn('btn-hoist-up', 'hoistUp', 'move');
+        setupBtn('btn-hoist-down', 'hoistDown', 'move');
 
         document.getElementById('btn-hook').addEventListener('click', (e) => {
             e.preventDefault();
-            if(isHost) toggleHook();
+            if (canRig) toggleHook();
         });
 
         const multiStatus = document.getElementById('multi-status');
@@ -471,17 +629,33 @@
                 socket = io({ transports: ['websocket'] });
                 networkRole = role;
                 isHost = (role === 'Host');
+                canMove = isHost;
+                canRig = !isHost;
+                netRoom = room;
+                hostGone = false;
+                document.getElementById('row-remote').style.display = isHost ? '' : 'none';
+                applyRoleUI();
+                applyViewPanel(isHost ? ['bird'] : ['floor', 'platform']);
+                setView(isHost ? 'bird' : 'floor');
 
                 // Runs on every (re)connect: the server forgets rooms when a socket drops.
                 socket.on('connect', () => {
+                    lastInputMask = 0;
                     socket.emit(isHost ? 'hostRoom' : 'joinRoom', room, (res) => {
                         if (res && res.ok) {
+                            netJoined = true;
+                            lastStateAt = performance.now(); // "paused" if nothing arrives within 1.5 s of joining
                             uiNetwork.textContent = `Online (${role}: ${room})`;
                             uiNetwork.classList.replace('text-slate-400', 'text-teal-400');
                         } else {
                             socket.disconnect();
                             socket = null;
+                            netJoined = false;
                             isHost = true;
+                            canMove = canRig = true;
+                            applyRoleUI();
+                            applyViewPanel(['bird', 'floor', 'platform']);
+                            setView('orbit');
                             networkRole = "Offline";
                             panel.style.display = '';
                             multiStatus.textContent = (res && res.error) || "Could not join room.";
@@ -493,11 +667,26 @@
                     uiNetwork.textContent = "Offline (reconnecting...)";
                 });
 
-                if (role === 'Viewer') {
-                    socket.on('hostLeft', () => {
-                        uiNetwork.textContent = `Online (Viewer: ${room}) - host left`;
+                if (role === 'Host') {
+                    // Combined input of all viewers: bit 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW
+                    socket.on('input', (m) => {
+                        const now = performance.now();
+                        for (const bit of [1, 2, 4, 8]) if (m & bit) remoteHold[bit] = now + 150;
+                        remoteMask = m;
+                        const names = ['Bal Fwd', 'Bal Back', 'Rot CCW', 'Rot CW'].filter((_, i) => m & (1 << i));
+                        document.getElementById('ui-remote').textContent = names.join(' + ') || 'none';
                     });
+                    socket.on('hook', () => {
+                        document.getElementById('ui-remote').textContent = 'Hook';
+                        toggleHook();
+                    });
+                }
+
+                if (role === 'Viewer') {
+                    socket.on('hostLeft', () => { hostGone = true; });
                     socket.on('stateUpdate', (s) => {
+                        lastStateAt = performance.now();
+                        hostGone = false;
                         // [px, py, pz, theta, yaw, dcw, lx, ly, lz, isHooked, loadYaw, tau_total]
                         netTarget.pivotPos.set(s[0], s[1], s[2]);
                         netTarget.theta = s[3];
@@ -546,6 +735,11 @@
         const globalHookPos = new THREE.Vector3();
 
         function toggleHook() {
+            // A viewer asks the host to hook/unhook; the host checks the range.
+            if (networkRole === 'Viewer') {
+                if (socket && socket.connected) socket.emit('hook');
+                return;
+            }
             hookVisual.getWorldPosition(globalHookPos);
             if (!isHooked) {
                 const dist = globalHookPos.distanceTo(loadPos);
@@ -600,7 +794,7 @@
                     padCwBack = gp.buttons[6]?.pressed || false; 
                     padCwFwd = gp.buttons[7]?.pressed || false; 
 
-                    if (gp.buttons[0]?.pressed && !gamepadHookTriggered) {
+                    if (canRig && gp.buttons[0]?.pressed && !gamepadHookTriggered) {
                         toggleHook();
                         gamepadHookTriggered = true;
                     } else if (!gp.buttons[0]?.pressed) {
@@ -608,22 +802,32 @@
                     }
                 }
 
-                // Horizontal Input
+                // Horizontal Input (move + hoist belong to the operator)
                 let ax = 0, az = 0;
-                if (keys['w'] || btnStates.transBack) az -= TRANS_ACCEL;
-                if (keys['s'] || btnStates.transFwd) az += TRANS_ACCEL;
-                if (keys['a'] || btnStates.transLeft) ax -= TRANS_ACCEL;
-                if (keys['d'] || btnStates.transRight) ax += TRANS_ACCEL;
-                
-                ax = ax || padAx;
-                az = az || padAz;
+                if (canMove) {
+                    if (keys['w'] || btnStates.transBack) az -= TRANS_ACCEL;
+                    if (keys['s'] || btnStates.transFwd) az += TRANS_ACCEL;
+                    if (keys['a'] || btnStates.transLeft) ax -= TRANS_ACCEL;
+                    if (keys['d'] || btnStates.transRight) ax += TRANS_ACCEL;
+                }
+
+                ax = ax || (canMove ? padAx : 0);
+                az = az || (canMove ? padAz : 0);
 
                 // Vertical Input (Strictly Separated)
                 let ay = 0;
                 let isHoisting = false;
-                if (keys['arrowup'] || btnStates.hoistUp) { ay += TRANS_ACCEL; isHoisting = true; }
-                if (keys['arrowdown'] || btnStates.hoistDown) { ay -= TRANS_ACCEL; isHoisting = true; }
-                if (padAy !== 0) { ay = padAy; isHoisting = true; }
+                if (canMove) {
+                    if (keys['arrowup'] || btnStates.hoistUp) { ay += TRANS_ACCEL; isHoisting = true; }
+                    if (keys['arrowdown'] || btnStates.hoistDown) { ay -= TRANS_ACCEL; isHoisting = true; }
+                    if (padAy !== 0) { ay = padAy; isHoisting = true; }
+                }
+
+                // Counterweight / rotation: local when offline, from the viewers when hosting
+                const inRotCCW = canRig ? (btnStates.rotCCW || padRotCCW || keys['arrowleft']) : remoteBit(4);
+                const inRotCW  = canRig ? (btnStates.rotCW  || padRotCW  || keys['arrowright']) : remoteBit(8);
+                const inCwFwd  = canRig ? (btnStates.cwFwd  || padCwFwd  || keys['q']) : remoteBit(1);
+                const inCwBack = canRig ? (btnStates.cwBack || padCwBack || keys['e']) : remoteBit(2);
 
                 // 1. Horizontal Physics
                 pivotVel.x += ax * dt;
@@ -664,15 +868,15 @@
                             + (isHooked ? (M_LOAD / g) * (RIG_HOOK_X * RIG_HOOK_X) : 0);
                 
                 let yawAlpha = 0;
-                if (btnStates.rotCCW || padRotCCW) yawAlpha += appliedYawTorque / I_yaw;
-                if (btnStates.rotCW || padRotCW) yawAlpha -= appliedYawTorque / I_yaw;
+                if (inRotCCW) yawAlpha += appliedYawTorque / I_yaw;
+                if (inRotCW) yawAlpha -= appliedYawTorque / I_yaw;
                 
                 yawVelocity += yawAlpha * dt;
                 yawVelocity *= (1.0 - 0.15 * dt); 
                 yaw += yawVelocity * dt;
 
-                if (btnStates.cwFwd || padCwFwd) dcw -= 5 * dt; 
-                if (btnStates.cwBack || padCwBack) dcw += 5 * dt; 
+                if (inCwFwd) dcw -= 5 * dt;
+                if (inCwBack) dcw += 5 * dt;
                 dcw = Math.max(-3, Math.min(20, dcw));
 
                 hookVisual.getWorldPosition(globalHookPos);
@@ -781,13 +985,17 @@
                     ]);
                     lastSyncTime = Date.now();
                 }
-            } else if (netHasState) {
-                const k = 1 - Math.exp(-dt * 20);
-                pivotPos.lerp(netTarget.pivotPos, k);
-                loadPos.lerp(netTarget.loadPos, k);
-                theta += (netTarget.theta - theta) * k;
-                yaw += (netTarget.yaw - yaw) * k;
-                dcw += (netTarget.dcw - dcw) * k;
+            } else {
+                sendRigInput();
+                updateHostStatus();
+                if (netHasState) {
+                    const k = 1 - Math.exp(-dt * 20);
+                    pivotPos.lerp(netTarget.pivotPos, k);
+                    loadPos.lerp(netTarget.loadPos, k);
+                    theta += (netTarget.theta - theta) * k;
+                    yaw += (netTarget.yaw - yaw) * k;
+                    dcw += (netTarget.dcw - dcw) * k;
+                }
             }
 
             counterweight.position.x = dcw;
@@ -825,7 +1033,7 @@
             loadBox.rotation.y = isHooked ? yaw : loadYaw; 
 
             const hookBtn = document.getElementById('btn-hook');
-            if(isHost) {
+            if (canRig) {
                 const distToLoad = globalHookPos.distanceTo(loadPos);
                 if (!isHooked && distToLoad < L_CABLE + 4.0) {
                     hookBtn.classList.add('shadow-[0_0_15px_rgba(34,197,94,0.5)]', 'border-green-500', 'text-green-400');
@@ -841,7 +1049,7 @@
                     hookBtn.textContent = "Action: Hook (Out of Range)";
                 }
             } else {
-                hookBtn.textContent = "Viewer Mode (No Controls)";
+                hookBtn.textContent = "Operator (hook handled by rigger)";
                 hookBtn.classList.add('opacity-50', 'cursor-not-allowed');
             }
 
@@ -865,8 +1073,11 @@
             requestAnimationFrame(animate);
             const dt = clock.getDelta();
             updatePhysics(dt);
-            controls.update();
-            
+            if (isFixedView()) {
+                if (lookFree) camera.rotation.set(lookPitch, lookYaw, 0);
+                else camera.lookAt(loadPos);
+            } else controls.update();
+
             deviceGroup.updateMatrixWorld(); 
             pipCamera.lookAt(loadPos.x, loadPos.y - 4, loadPos.z);
 
