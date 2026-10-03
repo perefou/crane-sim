@@ -136,6 +136,12 @@
             hoistUp: false, hoistDown: false 
         };
 
+        // ADDED: Safety catch to clear stuck keys if you click away to another window
+        window.addEventListener('blur', () => {
+            for (let k in keys) keys[k] = false;
+            for (let k in btnStates) btnStates[k] = false;
+        });
+
         let socket = null;
         let isHost = true; 
         let networkRole = "Offline";
@@ -544,15 +550,15 @@
                 } catch(e) {}
 
                 if (gp) {
-                    // Binary Digital Input (0 or 1) for Controller Sticks
-                    if (gp.axes[0] < -0.25) padAx = -TRANS_ACCEL;
-                    else if (gp.axes[0] > 0.25) padAx = TRANS_ACCEL;
+                    // Binary Digital Input (0 or 1) - DEADZONE INCREASED TO 0.4 to fix severe Stick Drift
+                    if (gp.axes[0] < -0.4) padAx = -TRANS_ACCEL;
+                    else if (gp.axes[0] > 0.4) padAx = TRANS_ACCEL;
                     
-                    if (gp.axes[1] < -0.25) padAz = -TRANS_ACCEL;
-                    else if (gp.axes[1] > 0.25) padAz = TRANS_ACCEL;
+                    if (gp.axes[1] < -0.4) padAz = -TRANS_ACCEL;
+                    else if (gp.axes[1] > 0.4) padAz = TRANS_ACCEL;
 
-                    if (gp.axes[3] < -0.25) padAy = TRANS_ACCEL; 
-                    else if (gp.axes[3] > 0.25) padAy = -TRANS_ACCEL;
+                    if (gp.axes[3] < -0.4) padAy = TRANS_ACCEL; 
+                    else if (gp.axes[3] > 0.4) padAy = -TRANS_ACCEL;
 
                     padRotCCW = gp.buttons[4]?.pressed || false;
                     padRotCW = gp.buttons[5]?.pressed || false;
