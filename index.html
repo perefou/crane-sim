@@ -19,13 +19,14 @@
 </head>
 <body class="text-white relative select-none focus:outline-none" tabindex="0">
 
-    <div id="focus-overlay" class="absolute inset-0 bg-slate-900/80 z-50 flex flex-col items-center justify-center text-white cursor-pointer backdrop-blur-sm transition-opacity duration-300">
+    <!-- FIXED: Using fixed positioning and z-[9999] to ensure it always covers the screen and catches clicks -->
+    <div id="focus-overlay" class="fixed inset-0 w-full h-full bg-slate-900/80 z-[9999] flex flex-col items-center justify-center text-white cursor-pointer backdrop-blur-sm transition-opacity duration-300">
         <svg class="w-16 h-16 mb-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
-        <h2 class="text-3xl font-bold text-glow mb-2">Click to Enable Controls</h2>
-        <p class="text-slate-300">Interact with the simulation to use the keyboard or controller.</p>
+        <h2 class="text-3xl font-bold text-glow mb-2">Click or Press Any Key</h2>
+        <p class="text-slate-300">Interact with the simulation to enable controls.</p>
     </div>
 
-    <div class="absolute top-4 left-4 panel p-6 rounded-2xl shadow-2xl border border-slate-600 w-96 pointer-events-none transition-all">
+    <div class="absolute top-4 left-4 panel p-6 rounded-2xl shadow-2xl border border-slate-600 w-96 pointer-events-none transition-all z-40">
         <div class="flex justify-between items-start mb-1">
             <h1 class="text-2xl font-bold text-blue-400 text-glow">Heavy Rig Sim</h1>
         </div>
@@ -48,7 +49,6 @@
                 <span class="text-slate-400">Hooked (7000lbs):</span>
                 <span id="ui-hook" class="font-bold text-red-400">No</span>
             </div>
-            <!-- Multiplayer Status UI -->
             <div class="flex justify-between items-center border-t border-slate-600 pt-2 mt-2">
                 <span class="text-slate-400">Network:</span>
                 <span id="ui-network" class="font-bold text-slate-400">Offline (Local)</span>
@@ -172,9 +172,8 @@
         let gamepadHookTriggered = false; 
         const btnStates = { cwFwd: false, cwBack: false, rotCCW: false, rotCW: false };
 
-        // --- MULTIPLAYER SYNC VARIABLES ---
         let socket = null;
-        let isHost = true; // Default to running physics locally
+        let isHost = true; 
         let networkRole = "Offline";
 
         const container = document.getElementById('canvas-container');
@@ -224,7 +223,6 @@
         gridHelper.material.transparent = true;
         scene.add(gridHelper);
 
-        // Platform 1: 30' away, 100' high
         const platformGeo = new THREE.BoxGeometry(20, 2, 20);
         const platformMat = new THREE.MeshStandardMaterial({ color: 0x5a6370, roughness: 0.6 });
         const platform = new THREE.Mesh(platformGeo, platformMat);
@@ -233,6 +231,19 @@
         platform.receiveShadow = true;
         scene.add(platform);
         
+        function createStripeTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffcc00'; ctx.fillRect(0, 0, 256, 256);
+            ctx.fillStyle = '#000000';
+            for (let i = -256; i < 512; i += 64) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 128, 256);
+                ctx.lineTo(i + 128 + 32, 256); ctx.lineTo(i + 32, 0); ctx.fill();
+            }
+            return new THREE.CanvasTexture(canvas);
+        }
+
         const stripeGeo = new THREE.PlaneGeometry(20, 20);
         const stripeTex = createStripeTexture();
         const stripeMat = new THREE.MeshBasicMaterial({ map: stripeTex });
@@ -241,7 +252,6 @@
         platformTop.position.set(-30, 100.02, 0);
         scene.add(platformTop);
 
-        // Platform 2: Exactly 10' higher and perfectly above Platform 1
         const platform2 = new THREE.Mesh(platformGeo, platformMat);
         platform2.position.set(-30, 109, 0); 
         platform2.castShadow = true;
@@ -301,6 +311,18 @@
         const gantryCable = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 200), darkMetal);
         scene.add(gantryCable);
 
+        function createCrateTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#8b5a2b'; ctx.fillRect(0, 0, 256, 256);
+            ctx.strokeStyle = '#5c3a18'; ctx.lineWidth = 15;
+            ctx.strokeRect(5, 5, 246, 246);
+            ctx.beginPath(); ctx.moveTo(5, 5); ctx.lineTo(251, 251); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(251, 5); ctx.lineTo(5, 251); ctx.stroke();
+            return new THREE.CanvasTexture(canvas);
+        }
+
         const loadBoxGeo = new THREE.BoxGeometry(10, 5, 4);
         const loadBoxTex = createCrateTexture();
         const loadBoxMat = new THREE.MeshStandardMaterial({ map: loadBoxTex, roughness: 0.9 });
@@ -318,36 +340,22 @@
         loadCable.visible = false;
         scene.add(loadCable);
 
-        function createStripeTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 256; canvas.height = 256;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#ffcc00'; ctx.fillRect(0, 0, 256, 256);
-            ctx.fillStyle = '#000000';
-            for (let i = -256; i < 512; i += 64) {
-                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 128, 256);
-                ctx.lineTo(i + 128 + 32, 256); ctx.lineTo(i + 32, 0); ctx.fill();
-            }
-            return new THREE.CanvasTexture(canvas);
-        }
-
-        function createCrateTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 256; canvas.height = 256;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#8b5a2b'; ctx.fillRect(0, 0, 256, 256);
-            ctx.strokeStyle = '#5c3a18'; ctx.lineWidth = 15;
-            ctx.strokeRect(5, 5, 246, 246);
-            ctx.beginPath(); ctx.moveTo(5, 5); ctx.lineTo(251, 251); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(251, 5); ctx.lineTo(5, 251); ctx.stroke();
-            return new THREE.CanvasTexture(canvas);
-        }
-
+        // --- OVERLAY DISMISSAL LOGIC ---
         const overlay = document.getElementById('focus-overlay');
-        overlay.addEventListener('click', () => {
+        
+        const dismissOverlay = () => {
+            if (overlay.style.pointerEvents === 'none') return;
             overlay.style.opacity = '0';
-            setTimeout(() => overlay.style.display = 'none', 300);
+            overlay.style.pointerEvents = 'none'; // Instantly prevent further clicks
+            setTimeout(() => { overlay.style.display = 'none'; }, 300);
             document.body.focus();
+        };
+
+        // Aggressively listen for any interaction to dismiss the screen
+        overlay.addEventListener('click', dismissOverlay);
+        overlay.addEventListener('touchstart', dismissOverlay, { passive: true });
+        window.addEventListener('keydown', (e) => {
+            if (overlay.style.display !== 'none') dismissOverlay();
         });
 
         renderer.domElement.addEventListener('mousedown', () => {
@@ -358,7 +366,7 @@
         });
 
         window.addEventListener('keydown', (e) => {
-            if (!isHost) return; // Prevent controls if viewer
+            if (!isHost) return; 
             if (document.activeElement && document.activeElement.id === 'ai-input') {
                 if (e.key === 'Enter') document.getElementById('ai-send').click();
                 return; 
@@ -384,6 +392,7 @@
 
         const setupBtn = (id, stateKey) => {
             const btn = document.getElementById(id);
+            if (!btn) return;
             const enable = (e) => { if(isHost) { e.preventDefault(); btnStates[stateKey] = true; } };
             const disable = (e) => { e.preventDefault(); btnStates[stateKey] = false; };
             btn.addEventListener('mousedown', enable);
@@ -415,27 +424,471 @@
             controls.target.set(-20, 50, 0);
         });
 
-        // --- MULTIPLAYER SETUP UI LOGIC ---
         const multiStatus = document.getElementById('multi-status');
         const uiNetwork = document.getElementById('ui-network');
         
         function initNetwork(role) {
+            // Failsafe: hide the panel no matter what happens, so it doesn't block the screen
+            setTimeout(() => {
+                document.getElementById('multiplayer-panel').style.display = 'none';
+            }, 1500);
+
             if (typeof io === 'undefined') {
                 multiStatus.textContent = "Server missing. Running offline.";
                 return;
             }
             
-            socket = io(); // Connects automatically when hosted on Glitch
-            networkRole = role;
-            
-            socket.on('connect', () => {
-                multiStatus.textContent = `Connected as ${role}!`;
-                uiNetwork.textContent = `Online (${role})`;
-                uiNetwork.classList.replace('text-slate-400', 'text-teal-400');
-            });
+            try {
+                socket = io(); 
+                networkRole = role;
+                
+                socket.on('connect', () => {
+                    multiStatus.textContent = `Connected as ${role}!`;
+                    uiNetwork.textContent = `Online (${role})`;
+                    uiNetwork.classList.replace('text-slate-400', 'text-teal-400');
+                });
 
-            if (role === 'Viewer') {
-                isHost = false;
-                // Listen for physics updates from Host
-                socket.on('stateUpdate', (state) => {
-                    pivot
+                if (role === 'Viewer') {
+                    isHost = false;
+                    socket.on('stateUpdate', (state) => {
+                        pivotPos.copy(state.pivotPos);
+                        theta = state.theta;
+                        yaw = state.yaw;
+                        dcw = state.dcw;
+                        loadPos.copy(state.loadPos);
+                        isHooked = state.isHooked;
+                        loadYaw = state.loadYaw;
+                        tau_total = state.tau_total;
+                    });
+                } else {
+                    isHost = true;
+                }
+            } catch(e) {
+                multiStatus.textContent = "Connection failed.";
+            }
+        }
+
+        document.getElementById('btn-host').addEventListener('click', () => initNetwork('Host'));
+        document.getElementById('btn-join').addEventListener('click', () => initNetwork('Viewer'));
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            
+            const pipBorder = document.getElementById('pip-border');
+            if (pipBorder) {
+                pipCamera.aspect = pipBorder.clientWidth / pipBorder.clientHeight;
+                pipCamera.updateProjectionMatrix();
+            }
+            
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        const globalHookPos = new THREE.Vector3();
+
+        function toggleHook() {
+            hookVisual.getWorldPosition(globalHookPos);
+            if (!isHooked) {
+                const dist = globalHookPos.distanceTo(loadPos);
+                if (dist < L_CABLE + 4.0) { 
+                    isHooked = true;
+                    yaw = loadYaw;
+                    yawVelocity = 0; 
+                }
+            } else {
+                isHooked = false;
+                loadYaw = yaw;
+            }
+        }
+
+        const clock = new THREE.Clock();
+        
+        const uiState = document.getElementById('ui-state');
+        const uiTorque = document.getElementById('ui-torque');
+        const uiCw = document.getElementById('ui-cw');
+        const uiHook = document.getElementById('ui-hook');
+        const successMsg = document.getElementById('success-msg');
+        
+        let lastSyncTime = 0;
+
+        function updatePhysics(dt) {
+            if (dt <= 0.001) return; 
+            if (dt > 0.1) dt = 0.1; 
+
+            if (isHost) {
+                let padAx = 0, padAy = 0, padAz = 0;
+                let padRotCCW = false, padRotCW = false, padCwFwd = false, padCwBack = false;
+                
+                let gp = null;
+                try {
+                    // Try/Catch block to prevent Iframe Sandbox security errors from crashing the physics loop
+                    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+                    gp = gamepads[0];
+                } catch(e) {
+                    // Gamepad API blocked by browser policy, fallback to keyboard
+                }
+
+                if (gp) {
+                    if (Math.abs(gp.axes[0]) > 0.15) padAx = gp.axes[0] * TRANS_ACCEL;
+                    if (Math.abs(gp.axes[1]) > 0.15) padAz = gp.axes[1] * TRANS_ACCEL;
+                    if (Math.abs(gp.axes[3]) > 0.15) padAy = -gp.axes[3] * TRANS_ACCEL; 
+
+                    padRotCCW = gp.buttons[4]?.pressed || false;
+                    padRotCW = gp.buttons[5]?.pressed || false;
+                    padCwBack = gp.buttons[6]?.pressed || false; 
+                    padCwFwd = gp.buttons[7]?.pressed || false; 
+
+                    if (gp.buttons[0]?.pressed && !gamepadHookTriggered) {
+                        toggleHook();
+                        gamepadHookTriggered = true;
+                    } else if (!gp.buttons[0]?.pressed) {
+                        gamepadHookTriggered = false;
+                    }
+                }
+
+                let ax = 0, ay = 0, az = 0;
+                if (keys['w']) az -= TRANS_ACCEL;
+                if (keys['s']) az += TRANS_ACCEL;
+                if (keys['a']) ax -= TRANS_ACCEL;
+                if (keys['d']) ax += TRANS_ACCEL;
+                if (keys['arrowup']) ay += TRANS_ACCEL;
+                if (keys['arrowdown']) ay -= TRANS_ACCEL;
+
+                ax = ax || padAx;
+                ay = ay || padAy;
+                az = az || padAz;
+
+                pivotVel.x += ax * dt;
+                pivotVel.y += ay * dt;
+                pivotVel.z += az * dt;
+
+                if (ax === 0) pivotVel.x -= Math.sign(pivotVel.x) * Math.min(Math.abs(pivotVel.x), TRANS_FRICTION * dt);
+                if (ay === 0) pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), TRANS_FRICTION * dt);
+                if (az === 0) pivotVel.z -= Math.sign(pivotVel.z) * Math.min(Math.abs(pivotVel.z), TRANS_FRICTION * dt);
+
+                pivotVel.clampLength(0, MAX_TRANS_SPEED);
+                pivotPos.addScaledVector(pivotVel, dt);
+
+                if (pivotPos.y < 12) {
+                    pivotPos.y = 12;
+                    if (pivotVel.y < 0) pivotVel.y = 0;
+                }
+
+                const appliedYawTorque = 2160; 
+                const I_yaw = (M_DEV / g) * (43 * 43 / 12) 
+                            + (M_CW / g) * (dcw * dcw) 
+                            + (M_HOOK / g) * (21 * 21) 
+                            + (isHooked ? (M_LOAD / g) * (21 * 21) : 0);
+                
+                let yawAlpha = 0;
+                if (btnStates.rotCCW || padRotCCW) yawAlpha += appliedYawTorque / I_yaw;
+                if (btnStates.rotCW || padRotCW) yawAlpha -= appliedYawTorque / I_yaw;
+                
+                yawVelocity += yawAlpha * dt;
+                yawVelocity *= (1.0 - 0.15 * dt); 
+                yaw += yawVelocity * dt;
+
+                if (btnStates.cwFwd || padCwFwd) dcw -= 5 * dt; 
+                if (btnStates.cwBack || padCwBack) dcw += 5 * dt; 
+                dcw = Math.max(-3, Math.min(20, dcw));
+
+                hookVisual.getWorldPosition(globalHookPos);
+
+                let tau_load = 0;
+                let I_load = 0;
+
+                if (isHooked) {
+                    loadPos.copy(globalHookPos);
+                    loadPos.y -= 2.5; 
+                    loadVelocity.set(0, 0, 0);
+                } else {
+                    loadVelocity.y -= g * dt;
+                    loadPos.addScaledVector(loadVelocity, dt);
+                    loadVelocity.multiplyScalar(0.995); 
+                }
+
+                if (loadPos.y < 2.5) {
+                    loadPos.y = 2.5;
+                    if (!isHooked) {
+                        loadVelocity.y = 0;
+                        loadVelocity.x *= 0.8; 
+                        loadVelocity.z *= 0.8;
+                    }
+                }
+
+                const platforms = [
+                    { minX: -40, maxX: -20, minY: 98, maxY: 102.5, minZ: -10, maxZ: 10 },    
+                    { minX: -40, maxX: -20, minY: 108, maxY: 112.5, minZ: -10, maxZ: 10 }    
+                ];
+
+                for (const p of platforms) {
+                    if (loadPos.x > p.minX && loadPos.x < p.maxX && loadPos.y > p.minY && loadPos.y < p.maxY && loadPos.z > p.minZ && loadPos.z < p.maxZ) {
+                        const distLeft = loadPos.x - p.minX, distRight = p.maxX - loadPos.x;
+                        const distTop = p.maxY - loadPos.y;
+                        const distBack = loadPos.z - p.minZ, distFront = p.maxZ - loadPos.z;
+                        
+                        const minDist = Math.min(distLeft, distRight, distTop, distBack, distFront);
+                        
+                        if (minDist === distTop) {
+                            loadPos.y = p.maxY;
+                            if (!isHooked) {
+                                loadVelocity.y = 0;
+                                loadVelocity.x *= 0.8;
+                                loadVelocity.z *= 0.8;
+                            }
+                        }
+                        else if (minDist === distLeft) loadPos.x = p.minX;
+                        else if (minDist === distRight) loadPos.x = p.maxX;
+                        else if (minDist === distBack) loadPos.z = p.minZ;
+                        else if (minDist === distFront) loadPos.z = p.maxZ;
+                    }
+                }
+
+                if (isHooked) {
+                    const intendedY = globalHookPos.y - 2.5;
+                    if (intendedY >= loadPos.y - 0.05) { 
+                        isTaut = true;
+                        const loadDistX = -21 * Math.cos(theta) - (-13) * Math.sin(theta); 
+                        tau_load = -loadDistX * M_LOAD * g;
+                        
+                        const r2_load = (-21)**2 + (-13)**2;
+                        I_load = M_LOAD * r2_load;
+                    } else {
+                        isTaut = false;
+                        tau_load = 0;
+                        I_load = 0;
+                    }
+                } else {
+                    isTaut = false;
+                }
+
+                const hookDistX = -21 * Math.cos(theta) - (-11) * Math.sin(theta);
+                const cwDistX = dcw * Math.cos(theta) - (-10) * Math.sin(theta);
+                const devDistX = -2 * Math.cos(theta) - (-8) * Math.sin(theta);
+
+                const tau_hook = -hookDistX * M_HOOK * g;
+                const tau_cw   = -cwDistX * M_CW * g;
+                const tau_dev  = -devDistX * M_DEV * g;
+
+                const tau_gravity = tau_hook + tau_load + tau_cw + tau_dev;
+                const tau_damping = -omega * 10000000; 
+                tau_total = tau_gravity + tau_damping;
+
+                const r2_hook = (-21)**2 + (-11)**2; 
+                const r2_cw = dcw**2 + (-10)**2;    
+                const r2_dev = (-2)**2 + (-8)**2;    
+
+                const I_hook = M_HOOK * r2_hook;
+                const I_cw   = M_CW * r2_cw;
+                const I_dev  = M_DEV * r2_dev;
+                const I_total = I_hook + I_load + I_cw + I_dev;
+
+                const alpha = tau_total / I_total;
+                omega += alpha * dt;
+                theta += omega * dt;
+
+                if (socket && socket.connected && Date.now() - lastSyncTime > 33) { 
+                    socket.emit('stateUpdate', {
+                        pivotPos: {x: pivotPos.x, y: pivotPos.y, z: pivotPos.z},
+                        theta: theta,
+                        yaw: yaw,
+                        dcw: dcw,
+                        loadPos: {x: loadPos.x, y: loadPos.y, z: loadPos.z},
+                        isHooked: isHooked,
+                        loadYaw: loadYaw,
+                        tau_total: tau_total
+                    });
+                    lastSyncTime = Date.now();
+                }
+            } 
+
+            counterweight.position.x = dcw;
+            hookVisual.getWorldPosition(globalHookPos);
+            
+            deviceGroup.position.copy(pivotPos);
+            deviceGroup.rotation.set(0, yaw, theta);
+
+            gantry.position.set(pivotPos.x, pivotPos.y + 200, pivotPos.z);
+            gantryCable.position.set(pivotPos.x, pivotPos.y + 100, pivotPos.z);
+            gantryCable.scale.set(1, 1, 1); 
+
+            if (isHooked) {
+                loadCable.visible = true;
+                const boxTop = new THREE.Vector3(loadPos.x, loadPos.y + 2.5, loadPos.z);
+                const cableVec = new THREE.Vector3().subVectors(boxTop, globalHookPos);
+                const dist = cableVec.length();
+                if (dist > 0.01) {
+                    loadCable.position.copy(globalHookPos).add(cableVec.clone().multiplyScalar(0.5));
+                    loadCable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cableVec.normalize());
+                    loadCable.scale.set(1, dist, 1);
+                }
+            } else {
+                loadCable.visible = false;
+            }
+
+            let winConditionMet = false;
+            if (!isHooked) {
+                const onPlat1 = Math.abs(loadPos.y - 102.5) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
+                const onPlat2 = Math.abs(loadPos.y - 112.5) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
+                
+                if (onPlat1 || onPlat2) winConditionMet = true;
+            }
+
+            loadBox.position.copy(loadPos);
+            loadBox.rotation.y = isHooked ? yaw : loadYaw; 
+
+            const hookBtn = document.getElementById('btn-hook');
+            if(isHost) {
+                const distToLoad = globalHookPos.distanceTo(loadPos);
+                if (!isHooked && distToLoad < L_CABLE + 4.0) {
+                    hookBtn.classList.add('shadow-[0_0_15px_rgba(34,197,94,0.5)]', 'border-green-500', 'text-green-400');
+                    hookBtn.classList.remove('border-amber-500', 'text-amber-400');
+                    hookBtn.textContent = "Action: Hook Ready! (SPACE)";
+                } else if (isHooked) {
+                    hookBtn.classList.remove('shadow-[0_0_15px_rgba(34,197,94,0.5)]', 'border-green-500', 'text-green-400');
+                    hookBtn.classList.add('border-amber-500', 'text-amber-400');
+                    hookBtn.textContent = "Action: Drop Load (SPACE)";
+                } else {
+                    hookBtn.classList.remove('shadow-[0_0_15px_rgba(34,197,94,0.5)]', 'border-green-500', 'text-green-400');
+                    hookBtn.classList.add('border-amber-500', 'text-amber-400');
+                    hookBtn.textContent = "Action: Hook (Out of Range)";
+                }
+            } else {
+                hookBtn.textContent = "Viewer Mode (No Controls)";
+                hookBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+
+            uiTorque.textContent = `${Math.round(tau_total).toLocaleString()} lb·ft`;
+            uiCw.textContent = `${dcw.toFixed(1)} ft`;
+            
+            if (isHooked) {
+                uiHook.textContent = "Yes"; uiHook.className = "font-bold text-green-400";
+            } else {
+                uiHook.textContent = "No"; uiHook.className = "font-bold text-red-400";
+            }
+
+            if (Math.abs(tau_total) < 20000) {
+                uiState.textContent = "Balanced"; uiState.className = "font-bold text-green-400";
+            } else if (tau_total > 20000) {
+                uiState.textContent = "Tipping Backward"; uiState.className = "font-bold text-orange-400";
+            } else {
+                uiState.textContent = "Tipping Forward"; uiState.className = "font-bold text-red-400";
+            }
+
+            if (winConditionMet) successMsg.classList.remove('opacity-0');
+            else successMsg.classList.add('opacity-0');
+        }
+
+        const aiInput = document.getElementById('ai-input');
+        const aiSend = document.getElementById('ai-send');
+        const chatHistoryDiv = document.getElementById('chat-history');
+        const geminiApiKey = ""; 
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`;
+        
+        let conversationHistory = [];
+
+        function appendMessage(role, text, isLoading = false) {
+            const msgDiv = document.createElement('div');
+            const id = 'msg-' + Date.now();
+            msgDiv.id = id;
+            msgDiv.className = `p-2 rounded-lg max-w-[90%] ${
+                role === 'user' 
+                ? 'bg-blue-600 text-white self-end text-right' 
+                : 'bg-purple-900/50 border border-purple-700 text-purple-200 self-start'
+            } ${isLoading ? 'animate-pulse' : ''}`;
+            msgDiv.textContent = text;
+            chatHistoryDiv.appendChild(msgDiv);
+            chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
+            return id;
+        }
+
+        function updateMessage(id, text) {
+            const msgDiv = document.getElementById(id);
+            if (msgDiv) {
+                msgDiv.textContent = text;
+                msgDiv.classList.remove('animate-pulse');
+                chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
+            }
+        }
+
+        async function fetchWithRetry(url, options, maxRetries = 3) {
+            let delay = 1000;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok && response.status === 429) throw new Error("Throttled");
+                    return response;
+                } catch (err) {
+                    if (i === maxRetries - 1) throw err;
+                    await new Promise(res => setTimeout(res, delay));
+                    delay *= 2;
+                }
+            }
+        }
+
+        aiSend.addEventListener('click', async () => {
+            const message = aiInput.value.trim();
+            if (!message) return;
+            appendMessage('user', message);
+            aiInput.value = '';
+            const loadingId = appendMessage('model', 'Analyzing heavy rig physics...', true);
+
+            const currentState = `[TELEMETRY: Pitch=${(theta * 180 / Math.PI).toFixed(1)}°, Torque=${Math.round(tau_total)} lb-ft, CW_Pos=${dcw.toFixed(1)}ft, Hooked=${isHooked}, CableTension=${isTaut}, LoadVel=${loadVelocity.length().toFixed(1)}]`;
+            
+            conversationHistory.push({ role: "user", parts: [{ text: `${currentState}\nUser: ${message}` }] });
+
+            const payload = {
+                contents: conversationHistory,
+                systemInstruction: {
+                    parts: [{ text: "You are 'Rig AI Copilot', an engineering assistant in a heavy crane simulator. The rig has a 43ft beam, 7000lb load, and a fast-moving counterweight (-3ft to 20ft). Pitch is 100% free-swinging (gravity only). User translates via Numpad, Rotates via A/D, slides counterweight via W/S. Use real-time telemetry to advise concisely (max 3 sentences) on how to balance the rig or maneuver." }]
+                }
+            };
+
+            try {
+                const response = await fetchWithRetry(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const result = await response.json();
+                if (result.candidates && result.candidates.length > 0) {
+                    const aiText = result.candidates[0].content.parts[0].text;
+                    updateMessage(loadingId, aiText);
+                    conversationHistory.push({ role: "model", parts: [{ text: aiText }] });
+                } else updateMessage(loadingId, "Error: AI response invalid.");
+            } catch (e) {
+                updateMessage(loadingId, "Connection error. Please try again.");
+            }
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = clock.getDelta();
+            updatePhysics(dt);
+            controls.update();
+            
+            deviceGroup.updateMatrixWorld(); 
+            pipCamera.lookAt(loadPos.x, loadPos.y - 4, loadPos.z);
+
+            renderer.setScissorTest(true);
+
+            renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+            renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+            renderer.render(scene, camera);
+
+            const pipBorder = document.getElementById('pip-border');
+            if (pipBorder) {
+                const rect = pipBorder.getBoundingClientRect();
+                const pipX = rect.left;
+                const pipY = window.innerHeight - rect.bottom;
+                const pipW = rect.width;
+                const pipH = rect.height;
+
+                renderer.setViewport(pipX, pipY, pipW, pipH);
+                renderer.setScissor(pipX, pipY, pipW, pipH);
+                renderer.render(scene, pipCamera);
+            }
+
+            renderer.setScissorTest(false);
+        }
+
+        window.onload = animate;
+    </script>
+</body>
+</html>
