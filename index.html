@@ -10,21 +10,24 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- ADDED: Three.js OBJ and MTL Loaders for CAD Files -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
     <!-- Socket.io for Multiplayer Sync -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Inter', sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Inter', sans-serif; touch-action: none; }
         #canvas-container { width: 100vw; height: 100vh; display: block; }
         .panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); }
         .text-glow { text-shadow: 0 0 10px rgba(255, 255, 255, 0.5); }
-        kbd { background: #334155; padding: 2px 6px; border-radius: 4px; border-bottom: 2px solid #0f172a; }
     </style>
 </head>
 <body class="text-white relative select-none focus:outline-none" tabindex="0">
 
-    <div class="absolute top-4 left-4 panel p-6 rounded-2xl shadow-2xl border border-slate-600 w-96 pointer-events-none transition-all z-40">
+    <!-- Status Panel (Top Left) -->
+    <div class="absolute top-4 left-4 panel p-6 rounded-2xl shadow-2xl border border-slate-600 w-72 pointer-events-none transition-all z-40">
         <div class="flex justify-between items-start mb-1">
-            <h1 class="text-2xl font-bold text-blue-400 text-glow">Heavy Rig Sim</h1>
+            <h1 class="text-xl font-bold text-blue-400 text-glow">Heavy Rig Sim</h1>
         </div>
         <p class="text-xs text-slate-300 mb-4 border-b border-slate-600 pb-4">7,000 lbs Load. 13,000 lbs Rig.</p>
         
@@ -38,70 +41,40 @@
                 <span id="ui-torque" class="font-mono bg-slate-800 px-2 py-1 rounded">0 lb·ft</span>
             </div>
             <div class="flex justify-between items-center">
-                <span class="text-slate-400">Counterweight Pos:</span>
-                <span id="ui-cw" class="font-mono bg-slate-800 px-2 py-1 rounded">3.4 ft</span>
-            </div>
-            <div class="flex justify-between items-center">
-                <span class="text-slate-400">Hooked (7000lbs):</span>
-                <span id="ui-hook" class="font-bold text-red-400">No</span>
+                <span class="text-slate-400">Counterweight:</span>
+                <span id="ui-cw" class="font-mono bg-slate-800 px-2 py-1 rounded">3.9 ft</span>
             </div>
             <div class="flex justify-between items-center border-t border-slate-600 pt-2 mt-2">
                 <span class="text-slate-400">Network:</span>
                 <span id="ui-network" class="font-bold text-slate-400">Offline (Local)</span>
             </div>
         </div>
-
-        <div class="mt-5 pt-4 border-t border-slate-600">
-            <h2 class="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Controls (Gamepad Supported)</h2>
-            <div class="grid grid-cols-2 gap-2 text-xs">
-                <div class="col-span-2">
-                    <span class="text-slate-400 block mb-1">Translate Horizontal:</span>
-                    <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or <span class="text-blue-300">Left Stick</span>
-                </div>
-                <div class="col-span-2 mt-2">
-                    <span class="text-slate-400 block mb-1">Translate Vertical:</span>
-                    <kbd>↑</kbd> <kbd>↓</kbd> or <span class="text-blue-300">Right Stick Y</span>
-                </div>
-                <div class="col-span-2 mt-2">
-                    <span class="text-slate-400 block mb-1">Rotation (CW/CCW):</span>
-                    Buttons or <span class="text-blue-300">Bumpers (L1/R1)</span>
-                </div>
-                <div class="col-span-2 mt-2">
-                    <span class="text-slate-400 block mb-1">Counterweight (Fwd/Back):</span>
-                    Buttons or <span class="text-blue-300">Triggers (L2/R2)</span>
-                </div>
-                <div class="col-span-2 mt-2">
-                    <span class="text-slate-400 block mb-1">Action:</span>
-                    <kbd>SPACE</kbd> or <span class="text-blue-300">'A' Button</span>
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- Multiplayer Setup Panel -->
-    <div id="multiplayer-panel" class="absolute top-4 left-[26rem] panel p-4 rounded-xl shadow-2xl border border-teal-500 w-80 pointer-events-auto z-40">
+    <div id="multiplayer-panel" class="absolute top-4 left-[20rem] panel p-4 rounded-xl shadow-2xl border border-teal-500 w-80 pointer-events-auto z-40">
         <h2 class="text-lg font-bold text-teal-400 mb-2">Live Session</h2>
-        <p class="text-xs text-slate-300 mb-4">Connect devices via Node.js WebSockets.</p>
         <div class="grid grid-cols-2 gap-2">
-            <button id="btn-host" class="bg-teal-700 hover:bg-teal-600 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-colors border border-teal-500">Host (Physics)</button>
-            <button id="btn-join" class="bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-colors border border-slate-500">Join (Viewer)</button>
+            <button id="btn-host" class="bg-teal-700 hover:bg-teal-600 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-colors border border-teal-500 cursor-pointer touch-manipulation">Host (Physics)</button>
+            <button id="btn-join" class="bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-colors border border-slate-500 cursor-pointer touch-manipulation">Join (Viewer)</button>
         </div>
         <p id="multi-status" class="text-xs text-center text-slate-400 mt-2">Waiting for selection...</p>
     </div>
 
+    <!-- Success Message -->
     <div id="success-msg" class="absolute top-1/4 left-1/2 transform -translate-x-1/2 panel px-8 py-4 rounded-xl shadow-2xl border border-green-500 opacity-0 transition-opacity duration-500 pointer-events-none text-center z-40">
         <h2 class="text-3xl font-bold text-green-400">Delivery Successful!</h2>
         <p class="text-slate-300 mt-1">Load safely secured on the platform.</p>
     </div>
 
-    <!-- PIP Camera Frame (Moved to top right, smaller for mobile) -->
-    <div id="pip-border" class="absolute top-4 right-4 w-64 h-40 border border-slate-400/50 rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.8)] z-40 overflow-hidden pointer-events-none flex flex-col justify-between p-1 bg-black/10 backdrop-blur-[1px]">
+    <!-- PIP Camera Frame (Top Right) -->
+    <div id="pip-border" class="absolute top-4 right-4 w-72 h-48 border border-slate-400/50 rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.8)] z-40 overflow-hidden pointer-events-none flex flex-col justify-between p-1 bg-black/10 backdrop-blur-[1px]">
         <div class="text-red-500 text-[10px] font-bold font-mono animate-pulse drop-shadow-md">● REC</div>
         <div class="text-white/80 text-[10px] font-mono drop-shadow-md bg-black/40 inline-block px-1 rounded w-max">CAM 2: UNDER-BEAM</div>
     </div>
 
     <!-- Mobile D-Pad (Bottom Left) -->
-    <div class="absolute bottom-4 left-4 grid grid-cols-3 gap-2 z-40 select-none w-48">
+    <div class="absolute bottom-6 left-6 grid grid-cols-3 gap-2 z-40 select-none w-48">
         <div></div>
         <button id="btn-trans-back" class="panel w-14 h-14 rounded-full border border-slate-500 text-white font-bold flex items-center justify-center active:bg-slate-600 touch-manipulation">W</button>
         <div></div>
@@ -111,26 +84,24 @@
     </div>
 
     <!-- Action Buttons (Bottom Right) -->
-    <div class="absolute bottom-4 right-4 grid grid-cols-2 gap-2 z-40 select-none w-72">
-        <button id="btn-hoist-up" class="panel py-3 rounded-lg border border-blue-500 text-blue-300 font-bold active:bg-blue-800 shadow-lg touch-manipulation">Hoist Up</button>
-        <button id="btn-hoist-down" class="panel py-3 rounded-lg border border-blue-500 text-blue-300 font-bold active:bg-blue-800 shadow-lg touch-manipulation">Hoist Down</button>
-        <button id="btn-cw-fwd" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Bal Fwd</button>
-        <button id="btn-cw-back" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Bal Back</button>
-        <button id="btn-rot-ccw" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CCW</button>
-        <button id="btn-rot-cw" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CW</button>
-        <button id="btn-hook" class="col-span-2 panel py-3 rounded-xl border border-amber-500 text-amber-400 font-bold active:bg-amber-800 shadow-lg touch-manipulation transition-all duration-200 mt-1">Action: Hook (Out of Range)</button>
-    </div>
-
-    <!-- Camera View Controls (Top Center) -->
-    <div class="absolute top-4 left-1/2 transform -translate-x-1/2 flex gap-2 pointer-events-auto z-40 select-none">
-        <button id="cam-load" class="panel px-4 py-2 rounded-xl border border-blue-500 text-blue-300 text-sm font-bold active:bg-blue-800 shadow-lg transition-colors">Cam: Load</button>
-        <button id="cam-plat" class="panel px-4 py-2 rounded-xl border border-blue-500 text-blue-300 text-sm font-bold active:bg-blue-800 shadow-lg transition-colors">Cam: Plat</button>
-        <button id="cam-wide" class="panel px-4 py-2 rounded-xl border border-blue-500 text-blue-300 text-sm font-bold active:bg-blue-800 shadow-lg transition-colors">Cam: Wide</button>
+    <div class="absolute bottom-6 right-6 grid grid-cols-2 gap-2 z-40 select-none w-80">
+        <button id="btn-hoist-up" class="panel py-4 rounded-lg border border-blue-500 text-blue-300 font-bold active:bg-blue-800 shadow-lg touch-manipulation">Hoist Up</button>
+        <button id="btn-hoist-down" class="panel py-4 rounded-lg border border-blue-500 text-blue-300 font-bold active:bg-blue-800 shadow-lg touch-manipulation">Hoist Down</button>
+        <button id="btn-cw-fwd" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Bal Fwd</button>
+        <button id="btn-cw-back" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Bal Back</button>
+        <button id="btn-rot-ccw" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CCW</button>
+        <button id="btn-rot-cw" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CW</button>
+        <button id="btn-hook" class="col-span-2 panel py-4 rounded-xl border border-amber-500 text-amber-400 font-bold active:bg-amber-800 shadow-lg touch-manipulation transition-all duration-200 mt-2">Action: Hook (Out of Range)</button>
     </div>
 
     <div id="canvas-container"></div>
 
     <script>
+        // --- CUSTOM RIG DIMENSIONS ---
+        // Uses your exact CAD export measurements!
+        const RIG_HOOK_X = -23.645; 
+        const RIG_HOOK_Y = -18.214; 
+
         const g = 32.2; 
         const M_HOOK = 200; 
         const M_CW = 9000; 
@@ -147,8 +118,8 @@
         
         let pivotPos = new THREE.Vector3(0, 16, 0); 
         let pivotVel = new THREE.Vector3(0, 0, 0);
-        const MAX_TRANS_SPEED = 8.0; 
-        const TRANS_ACCEL = 10.0; 
+        const MAX_TRANS_SPEED = 5.0; 
+        const TRANS_ACCEL = 8.0; 
         const TRANS_FRICTION = 4.0; 
         
         const L_CABLE = 7.0; 
@@ -204,6 +175,7 @@
         dirLight.shadow.mapSize.height = 2048;
         scene.add(dirLight);
 
+        // --- ENVIRONMENT GEOMETRIES ---
         const groundGeo = new THREE.PlaneGeometry(300, 300);
         const groundMat = new THREE.MeshStandardMaterial({ color: 0x4a5d23, roughness: 0.8 });
         const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -218,6 +190,7 @@
 
         const platformGeo = new THREE.BoxGeometry(20, 2, 20);
         const platformMat = new THREE.MeshStandardMaterial({ color: 0x5a6370, roughness: 0.6 });
+        
         const platform = new THREE.Mesh(platformGeo, platformMat);
         platform.position.set(-30, 99, 0); 
         platform.castShadow = true;
@@ -266,30 +239,112 @@
         const yellowPaint = new THREE.MeshStandardMaterial({ color: 0xffaa00, roughness: 0.4, metalness: 0.2 });
         const darkMetal = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.2 });
 
+        // ========================================================
+        // FALLBACK RIG LOGIC
+        // ========================================================
+        const placeholderRig = new THREE.Group();
+        
         const axleGeo = new THREE.CylinderGeometry(0.8, 0.8, 4, 16);
         const axle = new THREE.Mesh(axleGeo, darkMetal);
         axle.rotation.x = Math.PI / 2;
         axle.castShadow = true;
-        deviceGroup.add(axle);
+        placeholderRig.add(axle);
 
         const mastGeo = new THREE.BoxGeometry(2, 10, 2);
         const mast = new THREE.Mesh(mastGeo, yellowPaint);
         mast.position.set(0, -5, 0);
         mast.castShadow = true;
-        deviceGroup.add(mast);
+        placeholderRig.add(mast);
 
         const beamGeo = new THREE.BoxGeometry(43, 2, 2);
         const beam = new THREE.Mesh(beamGeo, yellowPaint);
         beam.position.set(-0.5, -10, 0);
         beam.castShadow = true;
-        deviceGroup.add(beam);
+        placeholderRig.add(beam);
 
+        deviceGroup.add(placeholderRig);
+
+        // ========================================================
+        // CUSTOM CAD RIG LOADER (.MTL + .OBJ)
+        // ========================================================
+        const mtlLoader = new THREE.MTLLoader();
+        
+        // 1. Try to load the materials first (case sensitive lowercase!)
+        mtlLoader.load(
+            'rig.mtl',
+            function (materials) {
+                materials.preload(); // Prepare the steel/satin colors
+                
+                const objLoader = new THREE.OBJLoader();
+                objLoader.setMaterials(materials); // Apply colors to the loader
+                
+                // 2. Load the 3D model
+                objLoader.load(
+                    'rig.obj', 
+                    function (object) {
+                        placeholderRig.visible = false; // Hide fallback blocks
+                        object.scale.set(0.0328, 0.0328, 0.0328); // mm to feet
+                        
+                        // IF YOUR RIG IS POINTING BACKWARDS, UNCOMMENT THIS LINE:
+                        // object.rotation.y = Math.PI; 
+                        
+                        // Ensure it casts shadows
+                        object.traverse(function (child) {
+                            if (child.isMesh) {
+                                child.castShadow = true;
+                                child.receiveShadow = true;
+                            }
+                        });
+
+                        deviceGroup.add(object);
+                        console.log("SUCCESS: rig.obj and rig.mtl loaded.");
+                    },
+                    undefined,
+                    function (error) {
+                        console.log("FAIL: rig.obj not found (check spelling/case). Using fallback blocks.");
+                    }
+                );
+            },
+            undefined,
+            function (error) {
+                console.log("WARNING: rig.mtl missing. Attempting to load rig.obj without materials...");
+                // Fallback: If MTL is missing but OBJ exists, load OBJ alone with yellow paint
+                const objLoader = new THREE.OBJLoader();
+                objLoader.load(
+                    'rig.obj', 
+                    function (object) {
+                        placeholderRig.visible = false;
+                        object.scale.set(0.0328, 0.0328, 0.0328);
+                        object.traverse(function (child) {
+                            if (child.isMesh) {
+                                child.material = yellowPaint;
+                                child.castShadow = true;
+                                child.receiveShadow = true;
+                            }
+                        });
+                        deviceGroup.add(object);
+                    },
+                    undefined,
+                    function (err) {
+                        console.log("FAIL: Both files missing. Using fallback blocks.");
+                    }
+                );
+            }
+        );
+
+        // ========================================================
+        // 2. THE HOOK
+        // ========================================================
         const hookVisual = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.2, 8, 16, Math.PI * 1.5), yellowPaint);
-        hookVisual.position.set(-21, -11, 0);
+        hookVisual.position.set(RIG_HOOK_X, RIG_HOOK_Y, 0);
         hookVisual.rotation.z = -Math.PI / 4;
         hookVisual.castShadow = true;
         deviceGroup.add(hookVisual);
 
+
+        // ========================================================
+        // 3. COUNTERWEIGHT
+        // ========================================================
         const cwGeo = new THREE.BoxGeometry(4, 4, 4);
         const cwMat = new THREE.MeshStandardMaterial({ color: 0x882222, metalness: 0.3, roughness: 0.7 });
         const counterweight = new THREE.Mesh(cwGeo, cwMat);
@@ -297,11 +352,12 @@
         counterweight.castShadow = true;
         deviceGroup.add(counterweight);
 
+
         const gantryGeo = new THREE.BoxGeometry(6, 2, 6);
         const gantry = new THREE.Mesh(gantryGeo, darkMetal);
         scene.add(gantry);
         
-        const gantryCable = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 200), darkMetal);
+        const gantryCable = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 400), darkMetal);
         scene.add(gantryCable);
 
         function createCrateTexture() {
@@ -316,6 +372,9 @@
             return new THREE.CanvasTexture(canvas);
         }
 
+        // ========================================================
+        // 4. LOAD PLACEHOLDER
+        // ========================================================
         const loadBoxGeo = new THREE.BoxGeometry(10, 5, 4);
         const loadBoxTex = createCrateTexture();
         const loadBoxMat = new THREE.MeshStandardMaterial({ map: loadBoxTex, roughness: 0.9 });
@@ -332,10 +391,6 @@
         const loadCable = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1), darkMetal);
         loadCable.visible = false;
         scene.add(loadCable);
-
-        renderer.domElement.addEventListener('mousedown', () => {
-            document.body.focus();
-        });
 
         window.addEventListener('keydown', (e) => {
             if (!isHost) return; 
@@ -382,30 +437,13 @@
         document.getElementById('btn-hook').addEventListener('click', (e) => {
             e.preventDefault();
             if(isHost) toggleHook();
-            document.body.focus();
-        });
-
-        document.getElementById('cam-load').addEventListener('click', () => {
-            camera.position.set(20, 30, 70);
-            controls.target.set(-15, 10, 0);
-        });
-        document.getElementById('cam-plat').addEventListener('click', () => {
-            camera.position.set(-10, 120, 40);
-            controls.target.set(-30, 100, 0);
-        });
-        document.getElementById('cam-wide').addEventListener('click', () => {
-            camera.position.set(10, 60, 150);
-            controls.target.set(-20, 50, 0);
         });
 
         const multiStatus = document.getElementById('multi-status');
         const uiNetwork = document.getElementById('ui-network');
         
         function initNetwork(role) {
-            // Failsafe: hide the panel no matter what happens, so it doesn't block the screen
-            setTimeout(() => {
-                document.getElementById('multiplayer-panel').style.display = 'none';
-            }, 1500);
+            document.getElementById('multiplayer-panel').style.display = 'none';
 
             if (typeof io === 'undefined') {
                 multiStatus.textContent = "Server missing. Running offline.";
@@ -417,7 +455,6 @@
                 networkRole = role;
                 
                 socket.on('connect', () => {
-                    multiStatus.textContent = `Connected as ${role}!`;
                     uiNetwork.textContent = `Online (${role})`;
                     uiNetwork.classList.replace('text-slate-400', 'text-teal-400');
                 });
@@ -425,11 +462,15 @@
                 if (role === 'Viewer') {
                     isHost = false;
                     socket.on('stateUpdate', (state) => {
-                        if (state.pivotPos) pivotPos.set(state.pivotPos.x, state.pivotPos.y, state.pivotPos.z);
+                        if (state.pivotPos) {
+                            pivotPos.set(state.pivotPos.x, state.pivotPos.y, state.pivotPos.z);
+                        }
                         theta = state.theta;
                         yaw = state.yaw;
                         dcw = state.dcw;
-                        if (state.loadPos) loadPos.set(state.loadPos.x, state.loadPos.y, state.loadPos.z);
+                        if (state.loadPos) {
+                            loadPos.set(state.loadPos.x, state.loadPos.y, state.loadPos.z);
+                        }
                         isHooked = state.isHooked;
                         loadYaw = state.loadYaw;
                         tau_total = state.tau_total;
@@ -438,7 +479,7 @@
                     isHost = true;
                 }
             } catch(e) {
-                multiStatus.textContent = "Connection failed.";
+                console.log("Connection failed", e);
             }
         }
 
@@ -481,11 +522,9 @@
         }
 
         const clock = new THREE.Clock();
-        
         const uiState = document.getElementById('ui-state');
         const uiTorque = document.getElementById('ui-torque');
         const uiCw = document.getElementById('ui-cw');
-        const uiHook = document.getElementById('ui-hook');
         const successMsg = document.getElementById('success-msg');
         
         let lastSyncTime = 0;
@@ -500,18 +539,20 @@
                 
                 let gp = null;
                 try {
-                    // Try/Catch block to prevent Iframe Sandbox security errors from crashing the physics loop
                     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
                     gp = gamepads[0];
-                } catch(e) {
-                    // Gamepad API blocked by browser policy, fallback to keyboard
-                }
+                } catch(e) {}
 
                 if (gp) {
-                    // Increased deadzone to 0.25 to prevent "stick drift" from causing the crane to fall
-                    if (Math.abs(gp.axes[0]) > 0.25) padAx = gp.axes[0] * TRANS_ACCEL;
-                    if (Math.abs(gp.axes[1]) > 0.25) padAz = gp.axes[1] * TRANS_ACCEL;
-                    if (Math.abs(gp.axes[3]) > 0.25) padAy = -gp.axes[3] * TRANS_ACCEL; 
+                    // Binary Digital Input (0 or 1) for Controller Sticks
+                    if (gp.axes[0] < -0.25) padAx = -TRANS_ACCEL;
+                    else if (gp.axes[0] > 0.25) padAx = TRANS_ACCEL;
+                    
+                    if (gp.axes[1] < -0.25) padAz = -TRANS_ACCEL;
+                    else if (gp.axes[1] > 0.25) padAz = TRANS_ACCEL;
+
+                    if (gp.axes[3] < -0.25) padAy = TRANS_ACCEL; 
+                    else if (gp.axes[3] > 0.25) padAy = -TRANS_ACCEL;
 
                     padRotCCW = gp.buttons[4]?.pressed || false;
                     padRotCW = gp.buttons[5]?.pressed || false;
@@ -526,33 +567,47 @@
                     }
                 }
 
-                let ax = 0, ay = 0, az = 0;
+                // Horizontal Input
+                let ax = 0, az = 0;
                 if (keys['w'] || btnStates.transBack) az -= TRANS_ACCEL;
                 if (keys['s'] || btnStates.transFwd) az += TRANS_ACCEL;
                 if (keys['a'] || btnStates.transLeft) ax -= TRANS_ACCEL;
                 if (keys['d'] || btnStates.transRight) ax += TRANS_ACCEL;
-                if (keys['arrowup'] || btnStates.hoistUp) ay += TRANS_ACCEL;
-                if (keys['arrowdown'] || btnStates.hoistDown) ay -= TRANS_ACCEL;
-
+                
                 ax = ax || padAx;
-                ay = ay || padAy;
                 az = az || padAz;
 
+                // Vertical Input (Strictly Separated)
+                let ay = 0;
+                let isHoisting = false;
+                if (keys['arrowup'] || btnStates.hoistUp) { ay += TRANS_ACCEL; isHoisting = true; }
+                if (keys['arrowdown'] || btnStates.hoistDown) { ay -= TRANS_ACCEL; isHoisting = true; }
+                if (padAy !== 0) { ay = padAy; isHoisting = true; }
+
+                // 1. Horizontal Physics
                 pivotVel.x += ax * dt;
-                pivotVel.y += ay * dt;
                 pivotVel.z += az * dt;
 
-                if (ax === 0) pivotVel.x -= Math.sign(pivotVel.x) * Math.min(Math.abs(pivotVel.x), TRANS_FRICTION * dt);
-                
-                // CRANE BRAKE: Aggressive deceleration when hoist buttons are released
-                if (ay === 0) {
-                    pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), TRANS_ACCEL * 4.0 * dt);
-                    if (Math.abs(pivotVel.y) < 0.8) pivotVel.y = 0; // Snap to absolute zero securely
-                }
-                
-                if (az === 0) pivotVel.z -= Math.sign(pivotVel.z) * Math.min(Math.abs(pivotVel.z), TRANS_FRICTION * dt);
+                if (ax === 0) pivotVel.x -= Math.sign(pivotVel.x) * Math.min(Math.abs(pivotVel.x), TRANS_FRICTION * 0.5 * dt);
+                if (az === 0) pivotVel.z -= Math.sign(pivotVel.z) * Math.min(Math.abs(pivotVel.z), TRANS_FRICTION * 0.5 * dt);
 
-                pivotVel.clampLength(0, MAX_TRANS_SPEED);
+                const horizSpeed = Math.sqrt(pivotVel.x * pivotVel.x + pivotVel.z * pivotVel.z);
+                if (horizSpeed > MAX_TRANS_SPEED) {
+                    const scale = MAX_TRANS_SPEED / horizSpeed;
+                    pivotVel.x *= scale;
+                    pivotVel.z *= scale;
+                }
+
+                // 2. Vertical Physics (Crane Brake)
+                if (isHoisting) {
+                    pivotVel.y += ay * dt;
+                    if (Math.abs(pivotVel.y) > MAX_TRANS_SPEED) {
+                        pivotVel.y = Math.sign(pivotVel.y) * MAX_TRANS_SPEED;
+                    }
+                } else {
+                    pivotVel.y = 0; // The Instant Crane Brake
+                }
+
                 pivotPos.addScaledVector(pivotVel, dt);
 
                 if (pivotPos.y < 12) {
@@ -563,8 +618,8 @@
                 const appliedYawTorque = 2160; 
                 const I_yaw = (M_DEV / g) * (43 * 43 / 12) 
                             + (M_CW / g) * (dcw * dcw) 
-                            + (M_HOOK / g) * (21 * 21) 
-                            + (isHooked ? (M_LOAD / g) * (21 * 21) : 0);
+                            + (M_HOOK / g) * (RIG_HOOK_X * RIG_HOOK_X) 
+                            + (isHooked ? (M_LOAD / g) * (RIG_HOOK_X * RIG_HOOK_X) : 0);
                 
                 let yawAlpha = 0;
                 if (btnStates.rotCCW || padRotCCW) yawAlpha += appliedYawTorque / I_yaw;
@@ -634,10 +689,10 @@
                     const intendedY = globalHookPos.y - 2.5;
                     if (intendedY >= loadPos.y - 0.05) { 
                         isTaut = true;
-                        const loadDistX = -21 * Math.cos(theta) - (-13) * Math.sin(theta); 
+                        const loadDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y - 2.5) * Math.sin(theta); 
                         tau_load = -loadDistX * M_LOAD * g;
                         
-                        const r2_load = (-21)**2 + (-13)**2;
+                        const r2_load = (RIG_HOOK_X)**2 + (RIG_HOOK_Y - 2.5)**2;
                         I_load = M_LOAD * r2_load;
                     } else {
                         isTaut = false;
@@ -648,7 +703,7 @@
                     isTaut = false;
                 }
 
-                const hookDistX = -21 * Math.cos(theta) - (-11) * Math.sin(theta);
+                const hookDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y) * Math.sin(theta);
                 const cwDistX = dcw * Math.cos(theta) - (-10) * Math.sin(theta);
                 const devDistX = -2 * Math.cos(theta) - (-8) * Math.sin(theta);
 
@@ -660,7 +715,7 @@
                 const tau_damping = -omega * 10000000; 
                 tau_total = tau_gravity + tau_damping;
 
-                const r2_hook = (-21)**2 + (-11)**2; 
+                const r2_hook = (RIG_HOOK_X)**2 + (RIG_HOOK_Y)**2; 
                 const r2_cw = dcw**2 + (-10)**2;    
                 const r2_dev = (-2)**2 + (-8)**2;    
 
@@ -716,7 +771,6 @@
             if (!isHooked) {
                 const onPlat1 = Math.abs(loadPos.y - 102.5) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
                 const onPlat2 = Math.abs(loadPos.y - 112.5) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
-                
                 if (onPlat1 || onPlat2) winConditionMet = true;
             }
 
@@ -746,12 +800,6 @@
 
             uiTorque.textContent = `${Math.round(tau_total).toLocaleString()} lb·ft`;
             uiCw.textContent = `${dcw.toFixed(1)} ft`;
-            
-            if (isHooked) {
-                uiHook.textContent = "Yes"; uiHook.className = "font-bold text-green-400";
-            } else {
-                uiHook.textContent = "No"; uiHook.className = "font-bold text-red-400";
-            }
 
             if (Math.abs(tau_total) < 20000) {
                 uiState.textContent = "Balanced"; uiState.className = "font-bold text-green-400";
