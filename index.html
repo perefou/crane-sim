@@ -550,15 +550,17 @@
                 } catch(e) {}
 
                 if (gp) {
-                    // Binary Digital Input (0 or 1) - DEADZONE INCREASED TO 0.4 to fix severe Stick Drift
+                    // Binary Digital Input (0 or 1) - DEADZONE 0.4
                     if (gp.axes[0] < -0.4) padAx = -TRANS_ACCEL;
                     else if (gp.axes[0] > 0.4) padAx = TRANS_ACCEL;
                     
                     if (gp.axes[1] < -0.4) padAz = -TRANS_ACCEL;
                     else if (gp.axes[1] > 0.4) padAz = TRANS_ACCEL;
 
-                    if (gp.axes[3] < -0.4) padAy = TRANS_ACCEL; 
-                    else if (gp.axes[3] > 0.4) padAy = -TRANS_ACCEL;
+                    // FIXED: Axis 3 is often an L2/R2 trigger that defaults to -1.0 when untouched!
+                    // Switched to Gamepad D-Pad Up (12) and D-Pad Down (13) for Hoist.
+                    if (gp.buttons[12]?.pressed) padAy = TRANS_ACCEL; 
+                    if (gp.buttons[13]?.pressed) padAy = -TRANS_ACCEL; 
 
                     padRotCCW = gp.buttons[4]?.pressed || false;
                     padRotCW = gp.buttons[5]?.pressed || false;
