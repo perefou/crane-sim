@@ -366,7 +366,8 @@
         const gantry = new THREE.Mesh(gantryGeo, darkMetal);
         scene.add(gantry);
         
-        const gantryCable = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 400), darkMetal);
+        // CHANGED: Reduced cable length from 400 to 200 so it doesn't stab into the floor
+        const gantryCable = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 200), darkMetal);
         scene.add(gantryCable);
 
         function createCrateTexture() {
@@ -813,12 +814,13 @@
             uiTorque.textContent = `${Math.round(tau_total).toLocaleString()} lb·ft`;
             uiCw.textContent = `${dcw.toFixed(1)} ft`;
 
+            // CHANGED: Fixed the UI Bug where Forward and Backward text were swapped!
             if (Math.abs(tau_total) < 20000) {
                 uiState.textContent = "Balanced"; uiState.className = "font-bold text-green-400";
             } else if (tau_total > 20000) {
-                uiState.textContent = "Tipping Backward"; uiState.className = "font-bold text-orange-400";
-            } else {
                 uiState.textContent = "Tipping Forward"; uiState.className = "font-bold text-red-400";
+            } else {
+                uiState.textContent = "Tipping Backward"; uiState.className = "font-bold text-orange-400";
             }
 
             if (winConditionMet) successMsg.classList.remove('opacity-0');
