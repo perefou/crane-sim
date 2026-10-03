@@ -54,6 +54,7 @@
     <!-- Multiplayer Setup Panel -->
     <div id="multiplayer-panel" class="absolute top-4 left-[20rem] panel p-4 rounded-xl shadow-2xl border border-teal-500 w-80 pointer-events-auto z-40">
         <h2 class="text-lg font-bold text-teal-400 mb-2">Live Session</h2>
+        <input id="room-code" type="text" maxlength="20" value="main" placeholder="Room code" class="w-full mb-2 px-2 py-1 rounded-lg text-sm bg-slate-800 border border-slate-600 text-white text-center">
         <div class="grid grid-cols-2 gap-2">
             <button id="btn-host" class="bg-teal-700 hover:bg-teal-600 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-colors border border-teal-500 cursor-pointer touch-manipulation">Host (Physics)</button>
             <button id="btn-join" class="bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-colors border border-slate-500 cursor-pointer touch-manipulation">Join (Viewer)</button>
@@ -451,41 +452,70 @@
         const multiStatus = document.getElementById('multi-status');
         const uiNetwork = document.getElementById('ui-network');
         
+        // Viewer-side smoothing: packets arrive ~30 Hz, rendering runs at display rate.
+        const netTarget = { pivotPos: new THREE.Vector3(), loadPos: new THREE.Vector3(), theta: 0, yaw: 0, dcw: 0 };
+        let netHasState = false;
+
         function initNetwork(role) {
-            document.getElementById('multiplayer-panel').style.display = 'none';
+            const panel = document.getElementById('multiplayer-panel');
+            const room = (document.getElementById('room-code').value.trim() || 'main').slice(0, 20);
+            panel.style.display = 'none';
 
             if (typeof io === 'undefined') {
+                panel.style.display = '';
                 multiStatus.textContent = "Server missing. Running offline.";
                 return;
             }
-            
+
             try {
-                socket = io(); 
+                socket = io({ transports: ['websocket'] });
                 networkRole = role;
-                
+                isHost = (role === 'Host');
+
+                // Runs on every (re)connect: the server forgets rooms when a socket drops.
                 socket.on('connect', () => {
-                    uiNetwork.textContent = `Online (${role})`;
-                    uiNetwork.classList.replace('text-slate-400', 'text-teal-400');
+                    socket.emit(isHost ? 'hostRoom' : 'joinRoom', room, (res) => {
+                        if (res && res.ok) {
+                            uiNetwork.textContent = `Online (${role}: ${room})`;
+                            uiNetwork.classList.replace('text-slate-400', 'text-teal-400');
+                        } else {
+                            socket.disconnect();
+                            socket = null;
+                            isHost = true;
+                            networkRole = "Offline";
+                            panel.style.display = '';
+                            multiStatus.textContent = (res && res.error) || "Could not join room.";
+                        }
+                    });
+                });
+
+                socket.on('connect_error', () => {
+                    uiNetwork.textContent = "Offline (reconnecting...)";
                 });
 
                 if (role === 'Viewer') {
-                    isHost = false;
-                    socket.on('stateUpdate', (state) => {
-                        if (state.pivotPos) {
-                            pivotPos.set(state.pivotPos.x, state.pivotPos.y, state.pivotPos.z);
-                        }
-                        theta = state.theta;
-                        yaw = state.yaw;
-                        dcw = state.dcw;
-                        if (state.loadPos) {
-                            loadPos.set(state.loadPos.x, state.loadPos.y, state.loadPos.z);
-                        }
-                        isHooked = state.isHooked;
-                        loadYaw = state.loadYaw;
-                        tau_total = state.tau_total;
+                    socket.on('hostLeft', () => {
+                        uiNetwork.textContent = `Online (Viewer: ${room}) - host left`;
                     });
-                } else {
-                    isHost = true;
+                    socket.on('stateUpdate', (s) => {
+                        // [px, py, pz, theta, yaw, dcw, lx, ly, lz, isHooked, loadYaw, tau_total]
+                        netTarget.pivotPos.set(s[0], s[1], s[2]);
+                        netTarget.theta = s[3];
+                        netTarget.yaw = s[4];
+                        netTarget.dcw = s[5];
+                        netTarget.loadPos.set(s[6], s[7], s[8]);
+                        isHooked = s[9] === 1;
+                        loadYaw = s[10];
+                        tau_total = s[11];
+                        if (!netHasState) {
+                            pivotPos.copy(netTarget.pivotPos);
+                            loadPos.copy(netTarget.loadPos);
+                            theta = netTarget.theta;
+                            yaw = netTarget.yaw;
+                            dcw = netTarget.dcw;
+                            netHasState = true;
+                        }
+                    });
                 }
             } catch(e) {
                 console.log("Connection failed", e);
@@ -742,19 +772,23 @@
                 theta += omega * dt;
 
                 if (socket && socket.connected && Date.now() - lastSyncTime > 33) { 
-                    socket.emit('stateUpdate', {
-                        pivotPos: {x: pivotPos.x, y: pivotPos.y, z: pivotPos.z},
-                        theta: theta,
-                        yaw: yaw,
-                        dcw: dcw,
-                        loadPos: {x: loadPos.x, y: loadPos.y, z: loadPos.z},
-                        isHooked: isHooked,
-                        loadYaw: loadYaw,
-                        tau_total: tau_total
-                    });
+                    // volatile: drop stale frames instead of queueing them on a slow link
+                    socket.volatile.emit('stateUpdate', [
+                        pivotPos.x, pivotPos.y, pivotPos.z,
+                        theta, yaw, dcw,
+                        loadPos.x, loadPos.y, loadPos.z,
+                        isHooked ? 1 : 0, loadYaw, tau_total
+                    ]);
                     lastSyncTime = Date.now();
                 }
-            } 
+            } else if (netHasState) {
+                const k = 1 - Math.exp(-dt * 20);
+                pivotPos.lerp(netTarget.pivotPos, k);
+                loadPos.lerp(netTarget.loadPos, k);
+                theta += (netTarget.theta - theta) * k;
+                yaw += (netTarget.yaw - yaw) * k;
+                dcw += (netTarget.dcw - dcw) * k;
+            }
 
             counterweight.position.x = dcw;
             hookVisual.getWorldPosition(globalHookPos);
