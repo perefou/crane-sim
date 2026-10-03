@@ -62,6 +62,13 @@
         <p id="multi-status" class="text-xs text-center text-slate-400 mt-2">Waiting for selection...</p>
     </div>
 
+    <!-- Camera views (buttons shown per role) -->
+    <div id="view-panel" class="absolute top-4 left-1/2 -translate-x-1/2 flex gap-2 z-40 select-none">
+        <button id="btn-view-bird" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Bird (0)</button>
+        <button id="btn-view-floor" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Floor (1)</button>
+        <button id="btn-view-platform" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Platform (2)</button>
+    </div>
+
     <!-- Success Message -->
     <div id="success-msg" class="absolute top-1/4 left-1/2 transform -translate-x-1/2 panel px-8 py-4 rounded-xl shadow-2xl border border-green-500 opacity-0 transition-opacity duration-500 pointer-events-none text-center z-40">
         <h2 class="text-3xl font-bold text-green-400">Delivery Successful!</h2>
@@ -174,6 +181,16 @@
             }
         }
 
+        // Viewer-side notice when the host stops sending (host tab in the background, or host left).
+        let lastStateAt = 0, hostGone = false, netRoom = '', netJoined = false;
+        function updateHostStatus() {
+            if (!netJoined) return;
+            const stale = hostGone || performance.now() - lastStateAt > 1500;
+            const txt = !stale ? `Online (Viewer: ${netRoom})`
+                      : hostGone ? 'Host left' : 'Host paused (tab hidden?)';
+            if (uiNetwork.textContent !== txt) uiNetwork.textContent = txt;
+        }
+
         function applyRoleUI() {
             const show = (id, on) => { document.getElementById(id).style.display = on ? '' : 'none'; };
             show('dpad', canMove);
@@ -201,6 +218,54 @@
         controls.target.set(-15, 10, 0);
         controls.enableDamping = true;
         controls.maxPolarAngle = Math.PI / 2 - 0.01;
+
+        // --- CAMERA VIEWS ---
+        // orbit: free camera (offline default). bird: operator overview, still orbitable.
+        // floor: rigger standing on the ground near the load. platform: rigger on the edge of the
+        // lower platform, in the 8 ft gap between the two platforms. Floor/platform look at the load.
+        const FLOOR_EYE_Y = 5.5;
+        const PLATFORM_EYE = new THREE.Vector3(-19.8, 105.5, 0); // platforms span x -40..-20
+        let viewMode = 'orbit';
+
+        function setView(mode) {
+            viewMode = mode;
+            scene.fog.density = (mode === 'bird') ? 0.0005 : 0.005; // no haze when viewed from far above
+            if (mode === 'bird') {
+                camera.position.set(-12, 200, 170);
+                controls.target.set(-12, 60, 0);
+                controls.enabled = true;
+                controls.update();
+            } else if (mode === 'floor') {
+                camera.position.set(loadPos.x + 14, FLOOR_EYE_Y, loadPos.z + 16);
+                controls.enabled = false;
+            } else if (mode === 'platform') {
+                camera.position.copy(PLATFORM_EYE);
+                controls.enabled = false;
+            } else {
+                camera.position.set(20, 30, 70);
+                controls.target.set(-15, 10, 0);
+                controls.enabled = true;
+                controls.update();
+            }
+            for (const m of ['bird', 'floor', 'platform']) {
+                document.getElementById('btn-view-' + m).classList.toggle('border-teal-400', m === mode);
+            }
+        }
+
+        function applyViewPanel(modes) {
+            for (const m of ['bird', 'floor', 'platform']) {
+                document.getElementById('btn-view-' + m).style.display = modes.includes(m) ? '' : 'none';
+            }
+        }
+
+        for (const m of ['bird', 'floor', 'platform']) {
+            document.getElementById('btn-view-' + m).addEventListener('click', (e) => { e.preventDefault(); setView(m); });
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.target && e.target.tagName === 'INPUT') return;
+            const mode = { '0': 'bird', '1': 'floor', '2': 'platform' }[e.key];
+            if (mode && document.getElementById('btn-view-' + mode).style.display !== 'none') setView(mode);
+        });
 
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
@@ -440,6 +505,7 @@
             if (e.target && e.target.tagName === 'INPUT') return; // typing the room code
             const key = e.key.toLowerCase();
             keys[key] = true;
+            sendRigInput();
 
             if (['w', 'a', 's', 'd', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
                 e.preventDefault();
@@ -454,14 +520,15 @@
         window.addEventListener('keyup', (e) => {
             const key = e.key.toLowerCase();
             keys[key] = false;
+            sendRigInput();
             if (key === ' ') keys.spaceTriggered = false;
         }, { passive: false });
 
         const setupBtn = (id, stateKey, group) => {
             const btn = document.getElementById(id);
             if (!btn) return;
-            const enable = (e) => { if (group === 'move' ? canMove : canRig) { e.preventDefault(); btnStates[stateKey] = true; } };
-            const disable = (e) => { e.preventDefault(); btnStates[stateKey] = false; };
+            const enable = (e) => { if (group === 'move' ? canMove : canRig) { e.preventDefault(); btnStates[stateKey] = true; sendRigInput(); } };
+            const disable = (e) => { e.preventDefault(); btnStates[stateKey] = false; sendRigInput(); };
             btn.addEventListener('mousedown', enable);
             btn.addEventListener('touchstart', enable, {passive: false});
             window.addEventListener('mouseup', disable); 
@@ -507,21 +574,30 @@
                 isHost = (role === 'Host');
                 canMove = isHost;
                 canRig = !isHost;
+                netRoom = room;
+                hostGone = false;
                 applyRoleUI();
+                applyViewPanel(isHost ? ['bird'] : ['floor', 'platform']);
+                setView(isHost ? 'bird' : 'floor');
 
                 // Runs on every (re)connect: the server forgets rooms when a socket drops.
                 socket.on('connect', () => {
                     lastInputMask = 0;
                     socket.emit(isHost ? 'hostRoom' : 'joinRoom', room, (res) => {
                         if (res && res.ok) {
+                            netJoined = true;
+                            lastStateAt = performance.now(); // "paused" if nothing arrives within 1.5 s of joining
                             uiNetwork.textContent = `Online (${role}: ${room})`;
                             uiNetwork.classList.replace('text-slate-400', 'text-teal-400');
                         } else {
                             socket.disconnect();
                             socket = null;
+                            netJoined = false;
                             isHost = true;
                             canMove = canRig = true;
                             applyRoleUI();
+                            applyViewPanel(['bird', 'floor', 'platform']);
+                            setView('orbit');
                             networkRole = "Offline";
                             panel.style.display = '';
                             multiStatus.textContent = (res && res.error) || "Could not join room.";
@@ -545,10 +621,10 @@
                 }
 
                 if (role === 'Viewer') {
-                    socket.on('hostLeft', () => {
-                        uiNetwork.textContent = `Online (Viewer: ${room}) - host left`;
-                    });
+                    socket.on('hostLeft', () => { hostGone = true; });
                     socket.on('stateUpdate', (s) => {
+                        lastStateAt = performance.now();
+                        hostGone = false;
                         // [px, py, pz, theta, yaw, dcw, lx, ly, lz, isHooked, loadYaw, tau_total]
                         netTarget.pivotPos.set(s[0], s[1], s[2]);
                         netTarget.theta = s[3];
@@ -849,6 +925,7 @@
                 }
             } else {
                 sendRigInput();
+                updateHostStatus();
                 if (netHasState) {
                     const k = 1 - Math.exp(-dt * 20);
                     pivotPos.lerp(netTarget.pivotPos, k);
@@ -934,8 +1011,9 @@
             requestAnimationFrame(animate);
             const dt = clock.getDelta();
             updatePhysics(dt);
-            controls.update();
-            
+            if (viewMode === 'floor' || viewMode === 'platform') camera.lookAt(loadPos);
+            else controls.update();
+
             deviceGroup.updateMatrixWorld(); 
             pipCamera.lookAt(loadPos.x, loadPos.y - 4, loadPos.z);
 
