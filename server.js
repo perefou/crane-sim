@@ -18,6 +18,10 @@ const combinedInput = (room) => {
   return mask;
 };
 
+// Where each viewer stands: [socket id, mode (0 floor, 1 platform), x, y, z, yaw]
+const viewList = (room) => Array.from(room.views, ([id, v]) => [id, ...v]);
+const sendViews = (name, room) => io.to(name).emit('views', viewList(room));
+
 io.on('connection', (socket) => {
   console.log('A user connected!');
 
@@ -27,10 +31,11 @@ io.on('connection', (socket) => {
     if (!validRoom(name)) return ack({ ok: false, error: 'Invalid room code.' });
     const room = rooms.get(name);
     if (room && room.host !== socket.id) return ack({ ok: false, error: 'Room already has a host.' });
-    if (!room) rooms.set(name, { host: socket.id, viewers: new Map() });
+    if (!room) rooms.set(name, { host: socket.id, viewers: new Map(), views: new Map() });
     socket.data.hostRoom = name;
     socket.join(name);
     ack({ ok: true });
+    socket.emit('views', viewList(rooms.get(name)));
   });
 
   socket.on('joinRoom', (name, ack) => {
@@ -40,6 +45,19 @@ io.on('connection', (socket) => {
     socket.data.viewerRoom = name;
     socket.join(name);
     ack({ ok: true });
+    socket.emit('views', viewList(rooms.get(name)));
+  });
+
+  // A viewer reports where it stands and which way it faces, so everyone can see its person.
+  socket.on('view', (v) => {
+    const name = socket.data.viewerRoom;
+    const room = rooms.get(name);
+    if (!room || !Array.isArray(v) || v.length !== 5 || !v.every(Number.isFinite)) return;
+    const [mode, x, y, z, yaw] = v;
+    if (mode !== 0 && mode !== 1) return;
+    if (Math.abs(x) > 500 || Math.abs(z) > 500 || y < -1 || y > 300 || Math.abs(yaw) > 1000) return;
+    room.views.set(socket.id, v);
+    sendViews(name, room);
   });
 
   // Host sends physics data (flat array), relayed to the viewers in the same room.
@@ -75,8 +93,11 @@ io.on('connection', (socket) => {
 
     // Release this viewer's buttons so nothing stays stuck on the host.
     const viewedRoom = rooms.get(socket.data.viewerRoom);
-    if (viewedRoom && viewedRoom.viewers.delete(socket.id)) {
-      io.to(viewedRoom.host).emit('input', combinedInput(viewedRoom));
+    if (viewedRoom) {
+      if (viewedRoom.viewers.delete(socket.id)) {
+        io.to(viewedRoom.host).emit('input', combinedInput(viewedRoom));
+      }
+      if (viewedRoom.views.delete(socket.id)) sendViews(socket.data.viewerRoom, viewedRoom);
     }
   });
 });
