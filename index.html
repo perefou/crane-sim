@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>3D Balance Lifting Simulation</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -98,45 +101,38 @@
         <p class="text-slate-300 mt-1">Load safely secured on the platform.</p>
     </div>
 
-    <!-- PIP Camera Frame (Larger, Left Side) -->
-    <div id="pip-border" class="absolute bottom-4 left-4 w-[30rem] h-[18rem] border border-slate-400/50 rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.8)] z-40 overflow-hidden pointer-events-none flex flex-col justify-between p-2 bg-black/10 backdrop-blur-[1px]">
-        <div class="text-red-500 text-xs font-bold font-mono animate-pulse drop-shadow-md">● REC</div>
-        <div class="text-white/80 text-xs font-mono drop-shadow-md bg-black/40 inline-block px-1 rounded w-max">CAM 2: UNDER-BEAM</div>
+    <!-- PIP Camera Frame (Moved to top right, smaller for mobile) -->
+    <div id="pip-border" class="absolute top-4 right-4 w-64 h-40 border border-slate-400/50 rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.8)] z-40 overflow-hidden pointer-events-none flex flex-col justify-between p-1 bg-black/10 backdrop-blur-[1px]">
+        <div class="text-red-500 text-[10px] font-bold font-mono animate-pulse drop-shadow-md">● REC</div>
+        <div class="text-white/80 text-[10px] font-mono drop-shadow-md bg-black/40 inline-block px-1 rounded w-max">CAM 2: UNDER-BEAM</div>
     </div>
 
-    <!-- On-Screen Controls -->
-    <div class="absolute top-[32rem] left-4 grid grid-cols-2 gap-2 pointer-events-auto z-40 select-none w-96">
-        <button id="btn-cw-fwd" class="panel px-4 py-3 rounded-xl border border-slate-500 text-white font-bold hover:bg-slate-700 active:bg-slate-600 shadow-lg touch-manipulation">Balance Fwd</button>
-        <button id="btn-cw-back" class="panel px-4 py-3 rounded-xl border border-slate-500 text-white font-bold hover:bg-slate-700 active:bg-slate-600 shadow-lg touch-manipulation">Balance Back</button>
-        <button id="btn-rot-ccw" class="panel px-4 py-3 rounded-xl border border-slate-500 text-white font-bold hover:bg-slate-700 active:bg-slate-600 shadow-lg touch-manipulation">Rotate CCW</button>
-        <button id="btn-rot-cw" class="panel px-4 py-3 rounded-xl border border-slate-500 text-white font-bold hover:bg-slate-700 active:bg-slate-600 shadow-lg touch-manipulation">Rotate CW</button>
-        <button id="btn-hook" class="col-span-2 panel px-4 py-3 rounded-xl border border-amber-500 text-amber-400 font-bold hover:bg-amber-900/60 active:bg-amber-800 shadow-lg touch-manipulation transition-all duration-200 mt-2">Action: Hook (Out of Range)</button>
+    <!-- Mobile D-Pad (Bottom Left) -->
+    <div class="absolute bottom-4 left-4 grid grid-cols-3 gap-2 z-40 select-none w-48">
+        <div></div>
+        <button id="btn-trans-back" class="panel w-14 h-14 rounded-full border border-slate-500 text-white font-bold flex items-center justify-center active:bg-slate-600 touch-manipulation">W</button>
+        <div></div>
+        <button id="btn-trans-left" class="panel w-14 h-14 rounded-full border border-slate-500 text-white font-bold flex items-center justify-center active:bg-slate-600 touch-manipulation">A</button>
+        <button id="btn-trans-fwd" class="panel w-14 h-14 rounded-full border border-slate-500 text-white font-bold flex items-center justify-center active:bg-slate-600 touch-manipulation">S</button>
+        <button id="btn-trans-right" class="panel w-14 h-14 rounded-full border border-slate-500 text-white font-bold flex items-center justify-center active:bg-slate-600 touch-manipulation">D</button>
     </div>
 
-    <!-- Camera View Controls -->
-    <div class="absolute bottom-10 left-1/2 transform -translate-x-1/2 flex gap-4 pointer-events-auto z-40 select-none">
-        <button id="cam-load" class="panel px-5 py-3 rounded-xl border border-blue-500 text-blue-300 font-bold hover:bg-blue-900/60 active:bg-blue-800 shadow-lg transition-colors">Cam: Loading</button>
-        <button id="cam-plat" class="panel px-5 py-3 rounded-xl border border-blue-500 text-blue-300 font-bold hover:bg-blue-900/60 active:bg-blue-800 shadow-lg transition-colors">Cam: Platform</button>
-        <button id="cam-wide" class="panel px-5 py-3 rounded-xl border border-blue-500 text-blue-300 font-bold hover:bg-blue-900/60 active:bg-blue-800 shadow-lg transition-colors">Cam: Wide View</button>
+    <!-- Action Buttons (Bottom Right) -->
+    <div class="absolute bottom-4 right-4 grid grid-cols-2 gap-2 z-40 select-none w-72">
+        <button id="btn-hoist-up" class="panel py-3 rounded-lg border border-blue-500 text-blue-300 font-bold active:bg-blue-800 shadow-lg touch-manipulation">Hoist Up</button>
+        <button id="btn-hoist-down" class="panel py-3 rounded-lg border border-blue-500 text-blue-300 font-bold active:bg-blue-800 shadow-lg touch-manipulation">Hoist Down</button>
+        <button id="btn-cw-fwd" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Bal Fwd</button>
+        <button id="btn-cw-back" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Bal Back</button>
+        <button id="btn-rot-ccw" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CCW</button>
+        <button id="btn-rot-cw" class="panel py-3 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CW</button>
+        <button id="btn-hook" class="col-span-2 panel py-3 rounded-xl border border-amber-500 text-amber-400 font-bold active:bg-amber-800 shadow-lg touch-manipulation transition-all duration-200 mt-1">Action: Hook (Out of Range)</button>
     </div>
 
-    <div class="absolute top-4 right-4 panel p-5 rounded-2xl shadow-2xl border border-purple-600 w-80 flex flex-col h-[70vh] transition-all z-40 pointer-events-none">
-        <h2 class="text-xl font-bold text-purple-400 mb-1 text-glow flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-            Rig AI Copilot
-        </h2>
-        <p class="text-xs text-slate-300 mb-4 border-b border-purple-600 pb-3">Ask Gemini for physics advice.</p>
-        
-        <div id="chat-history" class="flex-1 overflow-y-auto mb-3 space-y-3 pr-2 flex flex-col text-sm pointer-events-auto custom-scrollbar">
-            <div class="bg-purple-900/50 border border-purple-700 p-2 rounded-lg text-purple-200 self-start">
-                Heavy rig initialized. Network status standing by. How can I assist?
-            </div>
-        </div>
-
-        <div class="flex gap-2 pointer-events-auto">
-            <input type="text" id="ai-input" class="flex-1 bg-slate-800 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:outline-none focus:border-purple-400 transition-colors" placeholder="e.g., How do I balance it?">
-            <button id="ai-send" class="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg">Ask</button>
-        </div>
+    <!-- Camera View Controls (Top Center) -->
+    <div class="absolute top-4 left-1/2 transform -translate-x-1/2 flex gap-2 pointer-events-auto z-40 select-none">
+        <button id="cam-load" class="panel px-4 py-2 rounded-xl border border-blue-500 text-blue-300 text-sm font-bold active:bg-blue-800 shadow-lg transition-colors">Cam: Load</button>
+        <button id="cam-plat" class="panel px-4 py-2 rounded-xl border border-blue-500 text-blue-300 text-sm font-bold active:bg-blue-800 shadow-lg transition-colors">Cam: Plat</button>
+        <button id="cam-wide" class="panel px-4 py-2 rounded-xl border border-blue-500 text-blue-300 text-sm font-bold active:bg-blue-800 shadow-lg transition-colors">Cam: Wide</button>
     </div>
 
     <div id="canvas-container"></div>
@@ -170,7 +166,11 @@
         
         const keys = {};
         let gamepadHookTriggered = false; 
-        const btnStates = { cwFwd: false, cwBack: false, rotCCW: false, rotCW: false };
+        const btnStates = { 
+            cwFwd: false, cwBack: false, rotCCW: false, rotCW: false,
+            transFwd: false, transBack: false, transLeft: false, transRight: false,
+            hoistUp: false, hoistDown: false 
+        };
 
         let socket = null;
         let isHost = true; 
@@ -360,17 +360,10 @@
 
         renderer.domElement.addEventListener('mousedown', () => {
             document.body.focus();
-            if (document.activeElement && document.activeElement.id === 'ai-input') {
-                document.activeElement.blur();
-            }
         });
 
         window.addEventListener('keydown', (e) => {
             if (!isHost) return; 
-            if (document.activeElement && document.activeElement.id === 'ai-input') {
-                if (e.key === 'Enter') document.getElementById('ai-send').click();
-                return; 
-            }
             const key = e.key.toLowerCase();
             keys[key] = true;
             
@@ -404,6 +397,12 @@
         setupBtn('btn-cw-back', 'cwBack');
         setupBtn('btn-rot-ccw', 'rotCCW');
         setupBtn('btn-rot-cw', 'rotCW');
+        setupBtn('btn-trans-fwd', 'transFwd');
+        setupBtn('btn-trans-back', 'transBack');
+        setupBtn('btn-trans-left', 'transLeft');
+        setupBtn('btn-trans-right', 'transRight');
+        setupBtn('btn-hoist-up', 'hoistUp');
+        setupBtn('btn-hoist-down', 'hoistDown');
 
         document.getElementById('btn-hook').addEventListener('click', (e) => {
             e.preventDefault();
@@ -547,12 +546,12 @@
                 }
 
                 let ax = 0, ay = 0, az = 0;
-                if (keys['w']) az -= TRANS_ACCEL;
-                if (keys['s']) az += TRANS_ACCEL;
-                if (keys['a']) ax -= TRANS_ACCEL;
-                if (keys['d']) ax += TRANS_ACCEL;
-                if (keys['arrowup']) ay += TRANS_ACCEL;
-                if (keys['arrowdown']) ay -= TRANS_ACCEL;
+                if (keys['w'] || btnStates.transBack) az -= TRANS_ACCEL;
+                if (keys['s'] || btnStates.transFwd) az += TRANS_ACCEL;
+                if (keys['a'] || btnStates.transLeft) ax -= TRANS_ACCEL;
+                if (keys['d'] || btnStates.transRight) ax += TRANS_ACCEL;
+                if (keys['arrowup'] || btnStates.hoistUp) ay += TRANS_ACCEL;
+                if (keys['arrowdown'] || btnStates.hoistDown) ay -= TRANS_ACCEL;
 
                 ax = ax || padAx;
                 ay = ay || padAy;
@@ -563,7 +562,13 @@
                 pivotVel.z += az * dt;
 
                 if (ax === 0) pivotVel.x -= Math.sign(pivotVel.x) * Math.min(Math.abs(pivotVel.x), TRANS_FRICTION * dt);
-                if (ay === 0) pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), TRANS_FRICTION * dt);
+                
+                // CRANE BRAKE: Aggressive deceleration when hoist buttons are released
+                if (ay === 0) {
+                    pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), TRANS_FRICTION * 5.0 * dt);
+                    if (Math.abs(pivotVel.y) < 0.1) pivotVel.y = 0; // Snap to absolute zero to hold altitude
+                }
+                
                 if (az === 0) pivotVel.z -= Math.sign(pivotVel.z) * Math.min(Math.abs(pivotVel.z), TRANS_FRICTION * dt);
 
                 pivotVel.clampLength(0, MAX_TRANS_SPEED);
@@ -778,84 +783,6 @@
             if (winConditionMet) successMsg.classList.remove('opacity-0');
             else successMsg.classList.add('opacity-0');
         }
-
-        const aiInput = document.getElementById('ai-input');
-        const aiSend = document.getElementById('ai-send');
-        const chatHistoryDiv = document.getElementById('chat-history');
-        const geminiApiKey = ""; 
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`;
-        
-        let conversationHistory = [];
-
-        function appendMessage(role, text, isLoading = false) {
-            const msgDiv = document.createElement('div');
-            const id = 'msg-' + Date.now();
-            msgDiv.id = id;
-            msgDiv.className = `p-2 rounded-lg max-w-[90%] ${
-                role === 'user' 
-                ? 'bg-blue-600 text-white self-end text-right' 
-                : 'bg-purple-900/50 border border-purple-700 text-purple-200 self-start'
-            } ${isLoading ? 'animate-pulse' : ''}`;
-            msgDiv.textContent = text;
-            chatHistoryDiv.appendChild(msgDiv);
-            chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
-            return id;
-        }
-
-        function updateMessage(id, text) {
-            const msgDiv = document.getElementById(id);
-            if (msgDiv) {
-                msgDiv.textContent = text;
-                msgDiv.classList.remove('animate-pulse');
-                chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
-            }
-        }
-
-        async function fetchWithRetry(url, options, maxRetries = 3) {
-            let delay = 1000;
-            for (let i = 0; i < maxRetries; i++) {
-                try {
-                    const response = await fetch(url, options);
-                    if (!response.ok && response.status === 429) throw new Error("Throttled");
-                    return response;
-                } catch (err) {
-                    if (i === maxRetries - 1) throw err;
-                    await new Promise(res => setTimeout(res, delay));
-                    delay *= 2;
-                }
-            }
-        }
-
-        aiSend.addEventListener('click', async () => {
-            const message = aiInput.value.trim();
-            if (!message) return;
-            appendMessage('user', message);
-            aiInput.value = '';
-            const loadingId = appendMessage('model', 'Analyzing heavy rig physics...', true);
-
-            const currentState = `[TELEMETRY: Pitch=${(theta * 180 / Math.PI).toFixed(1)}°, Torque=${Math.round(tau_total)} lb-ft, CW_Pos=${dcw.toFixed(1)}ft, Hooked=${isHooked}, CableTension=${isTaut}, LoadVel=${loadVelocity.length().toFixed(1)}]`;
-            
-            conversationHistory.push({ role: "user", parts: [{ text: `${currentState}\nUser: ${message}` }] });
-
-            const payload = {
-                contents: conversationHistory,
-                systemInstruction: {
-                    parts: [{ text: "You are 'Rig AI Copilot', an engineering assistant in a heavy crane simulator. The rig has a 43ft beam, 7000lb load, and a fast-moving counterweight (-3ft to 20ft). Pitch is 100% free-swinging (gravity only). User translates via Numpad, Rotates via A/D, slides counterweight via W/S. Use real-time telemetry to advise concisely (max 3 sentences) on how to balance the rig or maneuver." }]
-                }
-            };
-
-            try {
-                const response = await fetchWithRetry(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                const result = await response.json();
-                if (result.candidates && result.candidates.length > 0) {
-                    const aiText = result.candidates[0].content.parts[0].text;
-                    updateMessage(loadingId, aiText);
-                    conversationHistory.push({ role: "model", parts: [{ text: aiText }] });
-                } else updateMessage(loadingId, "Error: AI response invalid.");
-            } catch (e) {
-                updateMessage(loadingId, "Connection error. Please try again.");
-            }
-        });
 
         function animate() {
             requestAnimationFrame(animate);
