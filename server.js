@@ -3,6 +3,9 @@ const app = express();
 const http = require('http').Server(app);
 const io = require('socket.io')(http);
 
+// THIS IS THE MAGIC LINE! It tells the server it is allowed to serve your .obj and .mtl files.
+app.use(express.static(__dirname));
+
 // Serve the index.html file
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/index.html');
