@@ -339,30 +339,7 @@
             return g;
         }
 
-        function makeLabelSprite(text) {
-            const c = document.createElement('canvas');
-            c.width = 256; c.height = 64;
-            const ctx = c.getContext('2d');
-            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-            ctx.fillRect(0, 0, 256, 64);
-            ctx.strokeStyle = '#2dd4bf';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(2, 2, 252, 60);
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 30px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(text, 128, 34);
-            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-                map: new THREE.CanvasTexture(c), sizeAttenuation: false, depthTest: false, transparent: true
-            }));
-            sprite.scale.set(0.16, 0.04, 1); // constant size on screen, so the host can find it from far away
-            sprite.renderOrder = 10;
-            return sprite;
-        }
-
-        const MODE_NAMES = ['FLOOR', 'PLATFORM'];
-        const avatars = new Map(); // socket id -> { group, label, mode }
+        const avatars = new Map(); // socket id -> person group
 
         // list: [[socket id, mode, x, y, z, yaw], ...] from the server
         function applyViews(list) {
@@ -370,31 +347,17 @@
             for (const [id, mode, x, y, z, yaw] of list) {
                 if (socket && id === socket.id) continue; // you do not see your own body
                 seen.add(id);
-                let a = avatars.get(id);
-                if (!a) {
-                    a = { group: makePerson(), label: null, mode: -1 };
-                    scene.add(a.group);
-                    avatars.set(id, a);
+                let person = avatars.get(id);
+                if (!person) {
+                    person = makePerson();
+                    scene.add(person);
+                    avatars.set(id, person);
                 }
-                if (a.mode !== mode) {
-                    if (a.label) a.group.remove(a.label);
-                    a.label = makeLabelSprite('RIGGER · ' + MODE_NAMES[mode]);
-                    a.group.add(a.label);
-                    a.mode = mode;
-                }
-                a.group.position.set(x, y, z);
-                a.group.rotation.y = yaw;
+                person.position.set(x, y, z);
+                person.rotation.y = yaw;
             }
-            for (const [id, a] of avatars) {
-                if (!seen.has(id)) { scene.remove(a.group); avatars.delete(id); }
-            }
-        }
-
-        // Keep each label just above its person's head, whatever the camera distance.
-        function updateAvatarLabels() {
-            for (const a of avatars.values()) {
-                const dist = camera.position.distanceTo(a.group.position);
-                a.label.position.y = PERSON_HEIGHT + 0.6 + 0.04 * dist * 0.55;
+            for (const [id, person] of avatars) {
+                if (!seen.has(id)) { scene.remove(person); avatars.delete(id); }
             }
         }
 
@@ -1189,7 +1152,6 @@
                 else camera.lookAt(loadPos);
             } else controls.update();
             sendViewIfChanged();
-            updateAvatarLabels();
 
             deviceGroup.updateMatrixWorld(); 
             pipCamera.lookAt(loadPos.x, loadPos.y - 4, loadPos.z);
