@@ -44,6 +44,10 @@
                 <span class="text-slate-400">Counterweight:</span>
                 <span id="ui-cw" class="font-mono bg-slate-800 px-2 py-1 rounded">3.9 ft</span>
             </div>
+            <div id="row-remote" class="flex justify-between items-center" style="display:none">
+                <span class="text-slate-400">Rigger input:</span>
+                <span id="ui-remote" class="font-mono bg-slate-800 px-2 py-1 rounded text-xs">none</span>
+            </div>
             <div class="flex justify-between items-center border-t border-slate-600 pt-2 mt-2">
                 <span class="text-slate-400">Network:</span>
                 <span id="ui-network" class="font-bold text-slate-400">Offline (Local)</span>
@@ -228,7 +232,7 @@
         // floor: rigger standing on the ground near the load. platform: rigger on the edge of the
         // lower platform, in the 8 ft gap between the two platforms. Floor/platform look at the load.
         const FLOOR_EYE_Y = 5.5;
-        const PLATFORM_EYE = new THREE.Vector3(-19.8, 105.5, 0); // platforms span x -40..-20
+        const PLATFORM_EYE = new THREE.Vector3(-19.8, 104.5, 0); // platforms span x -40..-20
         let viewMode = 'orbit';
 
         // Floor/platform views follow the load until you drag to look around (mouse or touch).
@@ -629,6 +633,7 @@
                 canRig = !isHost;
                 netRoom = room;
                 hostGone = false;
+                document.getElementById('row-remote').style.display = isHost ? '' : 'none';
                 applyRoleUI();
                 applyViewPanel(isHost ? ['bird'] : ['floor', 'platform']);
                 setView(isHost ? 'bird' : 'floor');
@@ -668,8 +673,13 @@
                         const now = performance.now();
                         for (const bit of [1, 2, 4, 8]) if (m & bit) remoteHold[bit] = now + 150;
                         remoteMask = m;
+                        const names = ['Bal Fwd', 'Bal Back', 'Rot CCW', 'Rot CW'].filter((_, i) => m & (1 << i));
+                        document.getElementById('ui-remote').textContent = names.join(' + ') || 'none';
                     });
-                    socket.on('hook', () => toggleHook());
+                    socket.on('hook', () => {
+                        document.getElementById('ui-remote').textContent = 'Hook';
+                        toggleHook();
+                    });
                 }
 
                 if (role === 'Viewer') {
