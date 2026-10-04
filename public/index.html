@@ -160,13 +160,18 @@
         // Raised starting height from 16 to 30 so the hook starts above ground
         let pivotPos = new THREE.Vector3(0, 30, 0); 
         let pivotVel = new THREE.Vector3(0, 0, 0);
-        const MAX_TRANS_SPEED = 5.0; 
-        const TRANS_ACCEL = 8.0; 
-        const TRANS_FRICTION = 4.0;
+        // --- CRANE MOTION: gentle acceleration, higher top speed (ft/s and ft/s^2; 1 ft/s = 60 ft/min) ---
+        // Travel (W A S D): 600 ft/min, 10 s to reach it, coasts about 33 ft once you let go.
+        // Hoist (up/down arrows): 360 ft/min, 6 s to reach it, coasts about 9 ft.
+        const TRAVEL_MAX_SPEED = 10.0;
+        const TRAVEL_ACCEL = 1.0;
+        const TRAVEL_DECEL = 1.5;
+        const HOIST_MAX_SPEED = 6.0;
+        const HOIST_ACCEL = 1.0;
+        const HOIST_DECEL = 2.0;
         // Rotation comes from a fan at the back of the rig: ~92 kg of thrust (90-100 kg), 18 ft behind the pivot.
         const FAN_THRUST_LBF = 92 * 2.20462; // kgf -> lbf, about 203 lbf
         const FAN_ARM_FT = 18;               // torque is about 3,650 lb-ft
-        const VERT_FRICTION = 3.0; // ft/s^2 the hoist coasts down after you let go (5 ft/s takes ~1.7 s and ~4 ft to stop)
         
         const L_CABLE = 7.0; 
         let loadPos = new THREE.Vector3();
@@ -990,16 +995,16 @@
 
                 if (gp) {
                     // Binary Digital Input (0 or 1) - DEADZONE 0.4
-                    if (gp.axes[0] < -0.4) padAx = -TRANS_ACCEL;
-                    else if (gp.axes[0] > 0.4) padAx = TRANS_ACCEL;
-                    
-                    if (gp.axes[1] < -0.4) padAz = -TRANS_ACCEL;
-                    else if (gp.axes[1] > 0.4) padAz = TRANS_ACCEL;
+                    if (gp.axes[0] < -0.4) padAx = -TRAVEL_ACCEL;
+                    else if (gp.axes[0] > 0.4) padAx = TRAVEL_ACCEL;
+
+                    if (gp.axes[1] < -0.4) padAz = -TRAVEL_ACCEL;
+                    else if (gp.axes[1] > 0.4) padAz = TRAVEL_ACCEL;
 
                     // FIXED: Axis 3 is often an L2/R2 trigger that defaults to -1.0 when untouched!
                     // Switched to Gamepad D-Pad Up (12) and D-Pad Down (13) for Hoist.
-                    if (gp.buttons[12]?.pressed) padAy = TRANS_ACCEL; 
-                    if (gp.buttons[13]?.pressed) padAy = -TRANS_ACCEL; 
+                    if (gp.buttons[12]?.pressed) padAy = HOIST_ACCEL;
+                    if (gp.buttons[13]?.pressed) padAy = -HOIST_ACCEL;
 
                     padRotCCW = gp.buttons[4]?.pressed || false;
                     padRotCW = gp.buttons[5]?.pressed || false;
@@ -1017,10 +1022,10 @@
                 // Horizontal Input (move + hoist belong to the operator)
                 let ax = 0, az = 0;
                 if (canMove) {
-                    if (keys['w'] || btnStates.transBack) az -= TRANS_ACCEL;
-                    if (keys['s'] || btnStates.transFwd) az += TRANS_ACCEL;
-                    if (keys['a'] || btnStates.transLeft) ax -= TRANS_ACCEL;
-                    if (keys['d'] || btnStates.transRight) ax += TRANS_ACCEL;
+                    if (keys['w'] || btnStates.transBack) az -= TRAVEL_ACCEL;
+                    if (keys['s'] || btnStates.transFwd) az += TRAVEL_ACCEL;
+                    if (keys['a'] || btnStates.transLeft) ax -= TRAVEL_ACCEL;
+                    if (keys['d'] || btnStates.transRight) ax += TRAVEL_ACCEL;
                 }
 
                 ax = ax || (canMove ? padAx : 0);
@@ -1030,8 +1035,8 @@
                 let ay = 0;
                 let isHoisting = false;
                 if (canMove) {
-                    if (keys['arrowup'] || btnStates.hoistUp) { ay += TRANS_ACCEL; isHoisting = true; }
-                    if (keys['arrowdown'] || btnStates.hoistDown) { ay -= TRANS_ACCEL; isHoisting = true; }
+                    if (keys['arrowup'] || btnStates.hoistUp) { ay += HOIST_ACCEL; isHoisting = true; }
+                    if (keys['arrowdown'] || btnStates.hoistDown) { ay -= HOIST_ACCEL; isHoisting = true; }
                     if (padAy !== 0) { ay = padAy; isHoisting = true; }
                 }
 
@@ -1045,12 +1050,12 @@
                 pivotVel.x += ax * dt;
                 pivotVel.z += az * dt;
 
-                if (ax === 0) pivotVel.x -= Math.sign(pivotVel.x) * Math.min(Math.abs(pivotVel.x), TRANS_FRICTION * 0.5 * dt);
-                if (az === 0) pivotVel.z -= Math.sign(pivotVel.z) * Math.min(Math.abs(pivotVel.z), TRANS_FRICTION * 0.5 * dt);
+                if (ax === 0) pivotVel.x -= Math.sign(pivotVel.x) * Math.min(Math.abs(pivotVel.x), TRAVEL_DECEL * dt);
+                if (az === 0) pivotVel.z -= Math.sign(pivotVel.z) * Math.min(Math.abs(pivotVel.z), TRAVEL_DECEL * dt);
 
                 const horizSpeed = Math.sqrt(pivotVel.x * pivotVel.x + pivotVel.z * pivotVel.z);
-                if (horizSpeed > MAX_TRANS_SPEED) {
-                    const scale = MAX_TRANS_SPEED / horizSpeed;
+                if (horizSpeed > TRAVEL_MAX_SPEED) {
+                    const scale = TRAVEL_MAX_SPEED / horizSpeed;
                     pivotVel.x *= scale;
                     pivotVel.z *= scale;
                 }
@@ -1058,11 +1063,11 @@
                 // 2. Vertical Physics: the rig coasts to a stop when you let go of the hoist
                 if (isHoisting) {
                     pivotVel.y += ay * dt;
-                    if (Math.abs(pivotVel.y) > MAX_TRANS_SPEED) {
-                        pivotVel.y = Math.sign(pivotVel.y) * MAX_TRANS_SPEED;
+                    if (Math.abs(pivotVel.y) > HOIST_MAX_SPEED) {
+                        pivotVel.y = Math.sign(pivotVel.y) * HOIST_MAX_SPEED;
                     }
                 } else {
-                    pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), VERT_FRICTION * dt);
+                    pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), HOIST_DECEL * dt);
                 }
 
                 pivotPos.addScaledVector(pivotVel, dt);
