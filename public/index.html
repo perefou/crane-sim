@@ -155,6 +155,9 @@
         const MAX_TRANS_SPEED = 5.0; 
         const TRANS_ACCEL = 8.0; 
         const TRANS_FRICTION = 4.0;
+        // Rotation comes from a fan at the back of the rig: ~92 kg of thrust (90-100 kg), 18 ft behind the pivot.
+        const FAN_THRUST_LBF = 92 * 2.20462; // kgf -> lbf, about 203 lbf
+        const FAN_ARM_FT = 18;               // torque is about 3,650 lb-ft
         const VERT_FRICTION = 3.0; // ft/s^2 the hoist coasts down after you let go (5 ft/s takes ~1.7 s and ~4 ft to stop)
         
         const L_CABLE = 7.0; 
@@ -1020,7 +1023,7 @@
                     if (pivotVel.y < 0) pivotVel.y = 0;
                 }
 
-                const appliedYawTorque = 2160; 
+                const appliedYawTorque = FAN_THRUST_LBF * FAN_ARM_FT;
                 const I_yaw = (M_DEV / g) * (43 * 43 / 12) 
                             + (M_CW / g) * (dcw * dcw) 
                             + ((M_HOOK + M_SPREADER) / g) * (RIG_HOOK_X * RIG_HOOK_X)
