@@ -135,7 +135,18 @@
         // Model point that becomes the load's centre: middle of the beams in X and Z, and the middle
         // between the two cross plates along the length (the lifting side)
         const LOAD_CENTER_MM = [445.8, 2575.6, -815.5];
-        const LOWER_PLATFORM_TOP = 100, UPPER_PLATFORM_TOP = 110; // platform deck heights (ft)
+
+        // --- THE BUILDING (builing-test.obj/.mtl, millimetres, Z up) ---
+        // 7 floor slabs (tops at 0, 17.63, 35.27, 55.45, 72.67, 85.40, 98.12 ft; the roof at 111.55 ft has no slab).
+        // The delivery platform is the SECOND-LAST floor, in the bay between two wall fins on the
+        // edge that faces the crane. The model is turned about 3.9 degrees, so it is straightened here.
+        const BUILDING_LIFT = 0.02;                      // stops the ground slab flickering against the ground plane
+        const PLATFORM_TOP = 85.40 + BUILDING_LIFT;      // walking surface of the 2nd-last floor (ft)
+        const BUILDING_MIN_MM = [151713.6, 19337.6];     // model's min corner (X, Y), from the file
+        const BAY_ANCHOR_FT = [35.9, 3.79];              // from that corner: bay centre along the edge, slab edge in front of it
+        const BUILDING_ALIGN_RAD = Math.atan(0.0679);    // slope of the slab edge, measured from the model
+        const BUILDING_FACE_X = -20;                     // where the slab edge sits in the scene (the old platforms ended here)
+        const PAD = { minX: -38, maxX: -21, minZ: -8.5, maxZ: 8.5 }; // landing zone on that floor, between the fins
         const LOAD_HANG = LOAD_HALF_H + SPREADER_DROP + SPREADER_DEPTH; // load centre below the rig tip (load top touches the beam)
         const SPREADER_CG_Y = RIG_HOOK_Y - SPREADER_DROP - SPREADER_DEPTH / 2; // spreader centre of gravity, in rig coordinates
         const SPREADER_HOOK_MM = [0, 0, 101.6];
@@ -249,7 +260,8 @@
         scene.background = new THREE.Color(0x87CEEB); 
         scene.fog = new THREE.FogExp2(0x87CEEB, 0.005);
 
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        // Near plane 0.5 ft (was 0.1): the building's thin slab layers flickered at bird-view distance
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 1000);
         camera.position.set(20, 30, 70);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -268,9 +280,9 @@
         // --- CAMERA VIEWS ---
         // orbit: free camera (offline default). bird: operator overview, still orbitable.
         // floor: rigger standing on the ground near the load. platform: rigger on the edge of the
-        // lower platform, in the 8 ft gap between the two platforms. Floor/platform look at the load.
+        // building's 2nd-last floor, at the slab edge in the bay. Floor/platform look at the load.
         const FLOOR_EYE_Y = 5.5;
-        const PLATFORM_EYE = new THREE.Vector3(-19.8, 104.5, 0); // platforms span x -40..-20
+        const PLATFORM_EYE = new THREE.Vector3(BUILDING_FACE_X + 0.2, PLATFORM_TOP + 5.5, 0); // on the slab edge of the 2nd-last floor
         let viewMode = 'orbit';
 
         // Floor/platform views follow the load until you drag to look around (mouse or touch).
@@ -309,8 +321,8 @@
             lookFree = false;
             scene.fog.density = (mode === 'bird') ? 0.0005 : 0.005; // no haze when viewed from far above
             if (mode === 'bird') {
-                camera.position.set(-12, 200, 170);
-                controls.target.set(-12, 60, 0);
+                camera.position.set(-20, 215, 215); // wide enough for the crane and the whole building
+                controls.target.set(-35, 50, -8);
                 controls.enabled = true;
                 controls.update();
             } else if (mode === 'floor') {
@@ -350,7 +362,7 @@
 
         // --- RIGGERS: low-poly people (5'11", hard hat, hi-vis vest) at the viewers' positions ---
         const PERSON_HEIGHT = 5.917; // 5 ft 11 in, scene units are feet
-        const PLATFORM_FEET = new THREE.Vector3(-20.8, 100, 0); // standing on the lower platform, near its edge
+        const PLATFORM_FEET = new THREE.Vector3(BUILDING_FACE_X - 0.8, PLATFORM_TOP, 0); // standing on the slab, near its edge
 
         function makePerson() {
             const mat = (color) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.8 });
@@ -422,15 +434,21 @@
         scene.add(ambientLight);
 
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(20, 150, 20);
+        // The shadow area is centred between the crane and the building (x -90..0, z -55..40, 112 ft tall)
+        dirLight.position.set(-25, 200, 25);
+        dirLight.target.position.set(-45, 0, -15);
         dirLight.castShadow = true;
-        dirLight.shadow.camera.left = -50;
-        dirLight.shadow.camera.right = 50;
-        dirLight.shadow.camera.top = 50;
-        dirLight.shadow.camera.bottom = -50;
-        dirLight.shadow.mapSize.width = 2048;
-        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.left = -110;
+        dirLight.shadow.camera.right = 110;
+        dirLight.shadow.camera.top = 110;
+        dirLight.shadow.camera.bottom = -110;
+        dirLight.shadow.camera.far = 500;
+        dirLight.shadow.bias = -0.0004;       // stops the ring pattern ("shadow acne") on flat slabs
+        dirLight.shadow.normalBias = 0.05;
+        dirLight.shadow.mapSize.width = 4096;
+        dirLight.shadow.mapSize.height = 4096;
         scene.add(dirLight);
+        scene.add(dirLight.target);
 
         // --- ENVIRONMENT GEOMETRIES ---
         const groundGeo = new THREE.PlaneGeometry(300, 300);
@@ -445,15 +463,51 @@
         gridHelper.material.transparent = true;
         scene.add(gridHelper);
 
-        const platformGeo = new THREE.BoxGeometry(20, 2, 20);
-        const platformMat = new THREE.MeshStandardMaterial({ color: 0x5a6370, roughness: 0.6 });
-        
-        const platform = new THREE.Mesh(platformGeo, platformMat);
-        platform.position.set(-30, 99, 0); 
-        platform.castShadow = true;
-        platform.receiveShadow = true;
-        scene.add(platform);
-        
+        // ========================================================
+        // THE BUILDING (replaces the two floating platforms)
+        // ========================================================
+        // CAD (x, y, z; Z up) -> scene: x = -y (interior goes away from the crane), y = z, z = -x
+        const BUILDING_ORTHO = new THREE.Matrix4().set(
+            0, -1, 0, 0,
+            0,  0, 1, 0,
+           -1,  0, 0, 0,
+            0,  0, 0, 1);
+        const buildingCad = new THREE.Group();
+        buildingCad.matrixAutoUpdate = false;
+        {
+            const anchor = [BUILDING_MIN_MM[0] + BAY_ANCHOR_FT[0] * 304.8, BUILDING_MIN_MM[1] + BAY_ANCHOR_FT[1] * 304.8];
+            const m = new THREE.Matrix4().makeTranslation(BUILDING_FACE_X, BUILDING_LIFT, 0);
+            m.multiply(BUILDING_ORTHO);
+            m.multiply(new THREE.Matrix4().makeScale(MM_TO_FT, MM_TO_FT, MM_TO_FT));
+            m.multiply(new THREE.Matrix4().makeRotationZ(BUILDING_ALIGN_RAD)); // straighten the slab edge
+            m.multiply(new THREE.Matrix4().makeTranslation(-anchor[0], -anchor[1], 0));
+            buildingCad.matrix.copy(m);
+        }
+        scene.add(buildingCad);
+
+        const addBuildingModel = (object) => {
+            object.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    child.material.side = THREE.DoubleSide;
+                }
+            });
+            buildingCad.add(object);
+        };
+        new THREE.MTLLoader().load('builing-test.mtl', (materials) => {
+            materials.preload();
+            const loader = new THREE.OBJLoader();
+            loader.setMaterials(materials);
+            loader.load('builing-test.obj', addBuildingModel, undefined, () => console.log('FAIL: builing-test.obj not found.'));
+        }, undefined, () => {
+            console.log('WARNING: builing-test.mtl missing, loading the building with plain concrete.');
+            new THREE.OBJLoader().load('builing-test.obj', (object) => {
+                object.traverse((child) => { if (child.isMesh) child.material = new THREE.MeshStandardMaterial({ color: 0xbfc5cc, roughness: 0.9 }); });
+                addBuildingModel(object);
+            }, undefined, () => console.log('FAIL: builing-test.obj not found.'));
+        });
+
         function createStripeTexture() {
             const canvas = document.createElement('canvas');
             canvas.width = 256; canvas.height = 256;
@@ -467,24 +521,16 @@
             return new THREE.CanvasTexture(canvas);
         }
 
-        const stripeGeo = new THREE.PlaneGeometry(20, 20);
-        const stripeTex = createStripeTexture();
-        const stripeMat = new THREE.MeshBasicMaterial({ map: stripeTex });
-        const platformTop = new THREE.Mesh(stripeGeo, stripeMat);
-        platformTop.rotation.x = -Math.PI / 2;
-        platformTop.position.set(-30, 100.02, 0);
-        scene.add(platformTop);
-
-        const platform2 = new THREE.Mesh(platformGeo, platformMat);
-        platform2.position.set(-30, 109, 0); 
-        platform2.castShadow = true;
-        platform2.receiveShadow = true;
-        scene.add(platform2);
-
-        const platformTop2 = new THREE.Mesh(stripeGeo, stripeMat);
-        platformTop2.rotation.x = -Math.PI / 2;
-        platformTop2.position.set(-30, 110.02, 0);
-        scene.add(platformTop2);
+        // Striped landing pad painted on the 2nd-last floor, between the two wall fins
+        const padTex = createStripeTexture();
+        padTex.wrapS = padTex.wrapT = THREE.RepeatWrapping;
+        padTex.repeat.set((PAD.maxX - PAD.minX) / 17, (PAD.maxZ - PAD.minZ) / 17);
+        const landingPad = new THREE.Mesh(
+            new THREE.PlaneGeometry(PAD.maxX - PAD.minX, PAD.maxZ - PAD.minZ),
+            new THREE.MeshBasicMaterial({ map: padTex, transparent: true, opacity: 0.85 }));
+        landingPad.rotation.x = -Math.PI / 2;
+        landingPad.position.set((PAD.minX + PAD.maxX) / 2, PLATFORM_TOP + 0.03, (PAD.minZ + PAD.maxZ) / 2);
+        scene.add(landingPad);
 
         const deviceGroup = new THREE.Group();
         deviceGroup.rotation.order = "YXZ"; 
@@ -1125,8 +1171,7 @@
                 }
 
                 const platforms = [
-                    { minX: -40, maxX: -20, minY: 98, maxY: LOWER_PLATFORM_TOP + LOAD_HALF_H, minZ: -10, maxZ: 10 },
-                    { minX: -40, maxX: -20, minY: 108, maxY: UPPER_PLATFORM_TOP + LOAD_HALF_H, minZ: -10, maxZ: 10 }
+                    { minX: PAD.minX, maxX: PAD.maxX, minY: PLATFORM_TOP - 2, maxY: PLATFORM_TOP + LOAD_HALF_H, minZ: PAD.minZ, maxZ: PAD.maxZ }
                 ];
 
                 for (const p of platforms) {
@@ -1254,9 +1299,9 @@
 
             let winConditionMet = false;
             if (!isHooked) {
-                const onPlat1 = Math.abs(loadPos.y - (LOWER_PLATFORM_TOP + LOAD_HALF_H)) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
-                const onPlat2 = Math.abs(loadPos.y - (UPPER_PLATFORM_TOP + LOAD_HALF_H)) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
-                if (onPlat1 || onPlat2) winConditionMet = true;
+                const onPad = Math.abs(loadPos.y - (PLATFORM_TOP + LOAD_HALF_H)) < 0.01
+                    && loadPos.x > PAD.minX && loadPos.x < PAD.maxX && loadPos.z > PAD.minZ && loadPos.z < PAD.maxZ;
+                if (onPad) winConditionMet = true;
             }
 
             loadBox.position.copy(loadPos);
