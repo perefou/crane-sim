@@ -117,6 +117,7 @@
         <button id="btn-rot-cw" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CW</button>
         <button id="btn-tag-ccw" class="panel py-4 rounded-lg border border-teal-500 text-teal-300 font-bold active:bg-teal-800 shadow-lg touch-manipulation">Tag CCW (Z)</button>
         <button id="btn-tag-cw" class="panel py-4 rounded-lg border border-teal-500 text-teal-300 font-bold active:bg-teal-800 shadow-lg touch-manipulation">Tag CW (X)</button>
+        <button id="btn-lock" class="col-span-2 panel py-3 rounded-xl border border-slate-500 text-slate-400 font-bold active:bg-slate-700 shadow-lg touch-manipulation transition-all duration-200 mt-2">Lock Load (strap the load first)</button>
         <button id="btn-hook" class="col-span-2 panel py-4 rounded-xl border border-amber-500 text-amber-400 font-bold active:bg-amber-800 shadow-lg touch-manipulation transition-all duration-200 mt-2">Strap: lower the spreader onto the load</button>
     </div>
 
@@ -197,6 +198,9 @@
         // The spreader hangs on a swivel, so it has its own heading (world yaw) and does not turn with the rig.
         // Riggers turn it by hand with tag lines; once the load is strapped on, the load turns with it.
         let spreaderYaw = 0, spreaderYawVel = 0;
+        // Lock: once the strapped load is in line with the rig, the swivel is locked so it stays in line when the
+        // rig turns or lifts, and the tag lines stop moving it. lockOffset is its fixed angle to the rig (0 or 180 degrees).
+        let loadLocked = false, lockOffset = 0;
         let dcw = DCW_BALANCED; // starts where the rig is balanced with the bare hook and spreader
         let isHooked = false;
         
@@ -286,7 +290,7 @@
             const show = (id, on) => { document.getElementById(id).style.display = on ? '' : 'none'; };
             show('dpad', canMove);
             ['btn-hoist-up', 'btn-hoist-down'].forEach(id => show(id, canMove));
-            ['btn-cw-fwd', 'btn-cw-back', 'btn-rot-ccw', 'btn-rot-cw', 'btn-tag-ccw', 'btn-tag-cw', 'btn-hook'].forEach(id => show(id, canRig));
+            ['btn-cw-fwd', 'btn-cw-back', 'btn-rot-ccw', 'btn-rot-cw', 'btn-tag-ccw', 'btn-tag-cw', 'btn-lock', 'btn-hook'].forEach(id => show(id, canRig));
         }
 
         const container = document.getElementById('canvas-container');
@@ -866,6 +870,10 @@
                 keys.spaceTriggered = true;
                 toggleHook();
             }
+            if (key === 'k' && canRig && !keys.lockTriggered) {
+                keys.lockTriggered = true;
+                toggleLock();
+            }
         }, { passive: false });
 
         window.addEventListener('keyup', (e) => {
@@ -873,6 +881,7 @@
             keys[key] = false;
             sendRigInput();
             if (key === ' ') keys.spaceTriggered = false;
+            if (key === 'k') keys.lockTriggered = false;
         }, { passive: false });
 
         // A press counts for at least MIN_PRESS_MS, so a quick tap is not lost between two frames.
@@ -993,8 +1002,12 @@
                         document.getElementById('ui-remote').textContent = names.join(' + ') || 'none';
                     });
                     socket.on('hook', () => {
-                        document.getElementById('ui-remote').textContent = 'Hook';
+                        document.getElementById('ui-remote').textContent = 'Strap';
                         toggleHook();
+                    });
+                    socket.on('lock', () => {
+                        document.getElementById('ui-remote').textContent = 'Lock';
+                        toggleLock();
                     });
                 }
 
@@ -1014,6 +1027,7 @@
                         netTarget.loadYaw = s[10];
                         tau_total = s[11];
                         netTarget.spreaderYaw = s[13];
+                        loadLocked = s[14] === 1;
                         if (!netHasState) {
                             pivotPos.copy(netTarget.pivotPos);
                             loadPos.copy(netTarget.loadPos);
@@ -1090,8 +1104,24 @@
                 }
             } else {
                 isHooked = false;                        // the load keeps its heading
+                loadLocked = false;
             }
         }
+
+        // Lock / unlock the strapped load's heading. Locking needs the load strapped on and in line with the rig.
+        function toggleLock() {
+            if (networkRole === 'Viewer') {
+                if (socket && socket.connected) socket.emit('lock');
+                return;
+            }
+            if (loadLocked) { loadLocked = false; return; }
+            if (!isHooked || Math.abs(angDiffPi(spreaderYaw, yaw)) > INLINE_ANGLE) return;
+            lockOffset = Math.round((spreaderYaw - yaw) / Math.PI) * Math.PI; // 0 (or 180 degrees)
+            spreaderYaw = yaw + lockOffset;                                   // square it up exactly
+            spreaderYawVel = 0;
+            loadLocked = true;
+        }
+        document.getElementById('btn-lock').addEventListener('click', (e) => { e.preventDefault(); if (canRig) toggleLock(); });
 
         // ========================================================
         // TOUCHING THE BUILDING = GAME OVER
@@ -1207,7 +1237,7 @@
         function resetSim() {
             pivotPos.set(0, 30, 0); pivotVel.set(0, 0, 0);
             theta = 0; omega = 0; yaw = 0; yawVelocity = 0;
-            spreaderYaw = 0; spreaderYawVel = 0; strapOffset = 0;
+            spreaderYaw = 0; spreaderYawVel = 0; strapOffset = 0; loadLocked = false; lockOffset = 0;
             dcw = DCW_BALANCED; isHooked = false; isTaut = false;
             const a = Math.random() * Math.PI * 2, r = Math.random() * 20;
             loadPos.set(Math.cos(a) * r, LOAD_HALF_H, Math.sin(a) * r);
@@ -1237,7 +1267,7 @@
                     pivotPos.x, pivotPos.y, pivotPos.z,
                     theta, yaw, dcw,
                     loadPos.x, loadPos.y, loadPos.z,
-                    isHooked ? 1 : 0, loadYaw, tau_total, gameOver, spreaderYaw
+                    isHooked ? 1 : 0, loadYaw, tau_total, gameOver, spreaderYaw, loadLocked ? 1 : 0
                 ]);
                 lastSyncTime = Date.now();
             }
@@ -1381,6 +1411,10 @@
                 spreaderYawVel += tagAlpha * dt;
                 spreaderYawVel *= (1.0 - TAG_DAMPING * dt);
                 spreaderYaw += spreaderYawVel * dt;
+                if (loadLocked) {                         // locked: fixed to the rig, the tag lines do nothing
+                    spreaderYaw = yaw + lockOffset;
+                    spreaderYawVel = 0;
+                }
                 if (isHooked) loadYaw = spreaderYaw - strapOffset;
 
                 if (inCwFwd) dcw -= 5 * dt;
@@ -1558,6 +1592,20 @@
                 else if (s.ok) hookBtn.textContent = "Strap Ready! (SPACE)";
                 else if (s.placed) hookBtn.textContent = `Strap: turn the spreader ${Math.round(Math.abs(s.dAng) * 180 / Math.PI)}° more (Z / X)`;
                 else hookBtn.textContent = "Strap: lower the spreader onto the load";
+
+                // Lock button: ready only when the strapped load is in line with the rig
+                const lockBtn = document.getElementById('btn-lock');
+                const offDeg = Math.round(Math.abs(angDiffPi(spreaderYaw, yaw)) * 180 / Math.PI);
+                const lockReady = isHooked && !loadLocked && offDeg <= INLINE_ANGLE * 180 / Math.PI;
+                lockBtn.classList.toggle('shadow-[0_0_15px_rgba(34,197,94,0.5)]', lockReady || loadLocked);
+                lockBtn.classList.toggle('border-green-500', lockReady || loadLocked);
+                lockBtn.classList.toggle('text-green-400', lockReady || loadLocked);
+                lockBtn.classList.toggle('border-slate-500', !(lockReady || loadLocked));
+                lockBtn.classList.toggle('text-slate-400', !(lockReady || loadLocked));
+                if (!isHooked) lockBtn.textContent = "Lock Load (strap the load first)";
+                else if (loadLocked) lockBtn.textContent = "LOCKED - Unlock Load (K)";
+                else if (lockReady) lockBtn.textContent = "Lock Load Ready! (K)";
+                else lockBtn.textContent = `Lock Load: turn ${offDeg}° more to line up (Z / X)`;
             } else {
                 hookBtn.textContent = "Operator (hook handled by rigger)";
                 hookBtn.classList.add('opacity-50', 'cursor-not-allowed');
@@ -1570,8 +1618,9 @@
             const dRig = angDiffPi(spreaderYaw, yaw);
             const inLine = Math.abs(dRig) <= INLINE_ANGLE;
             uiAlignLabel.textContent = isHooked ? 'Load vs rig:' : 'Spreader vs rig:';
-            uiAlign.textContent = `${Math.round(Math.abs(dRig) * 180 / Math.PI)}° ` + (inLine ? 'IN LINE' : (dRig > 0 ? 'turn CW' : 'turn CCW'));
-            uiAlign.className = 'font-mono bg-slate-800 px-2 py-1 rounded text-xs ' + (inLine ? 'text-green-400' : 'text-amber-400');
+            uiAlign.textContent = loadLocked ? 'LOCKED in line'
+                : `${Math.round(Math.abs(dRig) * 180 / Math.PI)}° ` + (inLine ? 'IN LINE' : (dRig > 0 ? 'turn CW' : 'turn CCW'));
+            uiAlign.className = 'font-mono bg-slate-800 px-2 py-1 rounded text-xs ' + (loadLocked ? 'text-teal-300' : inLine ? 'text-green-400' : 'text-amber-400');
 
             // CHANGED: Fixed the UI Bug where Forward and Backward text were swapped!
             if (Math.abs(tau_total) < 20000) {

@@ -63,7 +63,7 @@ io.on('connection', (socket) => {
   // Host sends physics data (flat array), relayed to the viewers in the same room.
   socket.on('stateUpdate', (data) => {
     const name = socket.data.hostRoom;
-    if (!name || !Array.isArray(data) || data.length !== 14) return;
+    if (!name || !Array.isArray(data) || data.length !== 15) return;
     socket.volatile.to(name).emit('stateUpdate', data);
   });
 
@@ -75,10 +75,14 @@ io.on('connection', (socket) => {
     io.to(room.host).emit('input', combinedInput(room));
   });
 
-  // A viewer asks the host to hook/unhook the load.
+  // A viewer asks the host to strap/unstrap the load, or to lock/unlock its heading.
   socket.on('hook', () => {
     const room = rooms.get(socket.data.viewerRoom);
     if (room) io.to(room.host).emit('hook');
+  });
+  socket.on('lock', () => {
+    const room = rooms.get(socket.data.viewerRoom);
+    if (room) io.to(room.host).emit('lock');
   });
 
   socket.on('disconnect', () => {
