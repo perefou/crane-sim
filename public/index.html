@@ -128,7 +128,15 @@
         const MM_TO_FT = 1 / 304.8;
         const SPREADER_DROP = 8 / 12;     // hooking point hangs 8" below the rig tip
         const SPREADER_DEPTH = 8 / 12;    // beam depth
-        const LOAD_HANG = 2.5 + SPREADER_DROP + SPREADER_DEPTH; // load centre below the rig tip (load top touches the beam)
+        // --- THE LOAD (load.obj/.mtl, millimetres): 4 aluminium beams with 2 cross plates on top ---
+        // Model axes: Y = long axis, Z = up (plates on top), X = width. Size in feet along scene X / Y / Z.
+        const LOAD_SIZE_FT = [17.47, 5.74, 3.92];
+        const LOAD_HALF_H = LOAD_SIZE_FT[1] / 2;
+        // Model point that becomes the load's centre: middle of the beams in X and Z, and the middle
+        // between the two cross plates along the length (the lifting side)
+        const LOAD_CENTER_MM = [445.8, 2575.6, -815.5];
+        const LOWER_PLATFORM_TOP = 100, UPPER_PLATFORM_TOP = 110; // platform deck heights (ft)
+        const LOAD_HANG = LOAD_HALF_H + SPREADER_DROP + SPREADER_DEPTH; // load centre below the rig tip (load top touches the beam)
         const SPREADER_CG_Y = RIG_HOOK_Y - SPREADER_DROP - SPREADER_DEPTH / 2; // spreader centre of gravity, in rig coordinates
         const SPREADER_HOOK_MM = [0, 0, 101.6];
         const SPREADER_RIG_MM = [ // order: 1 front-right, 2 front-left, 3 back-left, 4 back-right
@@ -329,6 +337,7 @@
         window.addEventListener('keydown', (e) => {
             if (e.target && e.target.tagName === 'INPUT') return;
             if (e.key.toLowerCase() === 'p') { spreaderMarkers.visible = !spreaderMarkers.visible; return; }
+            if (e.key.toLowerCase() === 'o') { loadFlip.rotation.x = loadFlip.rotation.x ? 0 : Math.PI; return; }
             if (e.key.toLowerCase() === 'l' && isFixedView()) { lookFree = false; return; }
             const mode = { '0': 'bird', '1': 'floor', '2': 'platform' }[e.key];
             if (mode && document.getElementById('btn-view-' + mode).style.display !== 'none') setView(mode);
@@ -682,17 +691,56 @@
         // ========================================================
         // 4. LOAD PLACEHOLDER
         // ========================================================
-        const loadBoxGeo = new THREE.BoxGeometry(10, 5, 4);
+        // Placeholder crate with the load's size; hidden once load.obj has loaded
+        const loadBoxGeo = new THREE.BoxGeometry(...LOAD_SIZE_FT);
         const loadBoxTex = createCrateTexture();
         const loadBoxMat = new THREE.MeshStandardMaterial({ map: loadBoxTex, roughness: 0.9 });
         const loadBox = new THREE.Mesh(loadBoxGeo, loadBoxMat);
         loadBox.castShadow = true;
         loadBox.receiveShadow = true;
         scene.add(loadBox);
+
+        // The real load, in millimetres, same axis mapping as the spreader. If it looks turned or
+        // flipped, change CAD_TO_SCENE (shared with the spreader) or give the load its own matrix here.
+        const loadCad = new THREE.Group();
+        loadCad.matrixAutoUpdate = false;
+        {
+            const centre = new THREE.Vector3(...LOAD_CENTER_MM).multiplyScalar(MM_TO_FT).applyMatrix4(CAD_TO_SCENE);
+            loadCad.matrix.copy(CAD_TO_SCENE).scale(new THREE.Vector3(MM_TO_FT, MM_TO_FT, MM_TO_FT));
+            loadCad.matrix.setPosition(-centre.x, -centre.y, -centre.z);
+        }
+        // Press O to flip the load upside down (to check which way up the CAD model should go)
+        const loadFlip = new THREE.Group();
+        loadFlip.add(loadCad);
+        loadBox.add(loadFlip);
+
+        const addLoadModel = (object) => {
+            object.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    child.material.side = THREE.DoubleSide;
+                }
+            });
+            loadCad.add(object);
+            loadBox.material.visible = false; // hide the placeholder, keep the model (its child) visible
+        };
+        new THREE.MTLLoader().load('load.mtl', (materials) => {
+            materials.preload();
+            const loader = new THREE.OBJLoader();
+            loader.setMaterials(materials);
+            loader.load('load.obj', addLoadModel, undefined, () => console.log('FAIL: load.obj not found, using the placeholder crate.'));
+        }, undefined, () => {
+            console.log('WARNING: load.mtl missing, loading load.obj with plain steel.');
+            new THREE.OBJLoader().load('load.obj', (object) => {
+                object.traverse((child) => { if (child.isMesh) child.material = darkMetal; });
+                addLoadModel(object);
+            }, undefined, () => console.log('FAIL: load.obj not found, using the placeholder crate.'));
+        });
         
         const spawnAngle = Math.random() * Math.PI * 2;
         const spawnRadius = Math.random() * 20;
-        loadPos.set(Math.cos(spawnAngle) * spawnRadius, 2.5, Math.sin(spawnAngle) * spawnRadius);
+        loadPos.set(Math.cos(spawnAngle) * spawnRadius, LOAD_HALF_H, Math.sin(spawnAngle) * spawnRadius);
         loadYaw = Math.random() * Math.PI * 2;
 
         const loadCable = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1), darkMetal);
@@ -1056,8 +1104,8 @@
                     loadVelocity.multiplyScalar(0.995); 
                 }
 
-                if (loadPos.y < 2.5) {
-                    loadPos.y = 2.5;
+                if (loadPos.y < LOAD_HALF_H) {
+                    loadPos.y = LOAD_HALF_H;
                     if (!isHooked) {
                         loadVelocity.y = 0;
                         loadVelocity.x *= 0.8; 
@@ -1066,8 +1114,8 @@
                 }
 
                 const platforms = [
-                    { minX: -40, maxX: -20, minY: 98, maxY: 102.5, minZ: -10, maxZ: 10 },    
-                    { minX: -40, maxX: -20, minY: 108, maxY: 112.5, minZ: -10, maxZ: 10 }    
+                    { minX: -40, maxX: -20, minY: 98, maxY: LOWER_PLATFORM_TOP + LOAD_HALF_H, minZ: -10, maxZ: 10 },
+                    { minX: -40, maxX: -20, minY: 108, maxY: UPPER_PLATFORM_TOP + LOAD_HALF_H, minZ: -10, maxZ: 10 }
                 ];
 
                 for (const p of platforms) {
@@ -1181,7 +1229,7 @@
 
             if (isHooked) {
                 loadCable.visible = true;
-                const boxTop = new THREE.Vector3(loadPos.x, loadPos.y + 2.5, loadPos.z);
+                const boxTop = new THREE.Vector3(loadPos.x, loadPos.y + LOAD_HALF_H, loadPos.z);
                 const cableVec = new THREE.Vector3().subVectors(boxTop, globalHookPos);
                 const dist = cableVec.length();
                 if (dist > 0.01) {
@@ -1195,8 +1243,8 @@
 
             let winConditionMet = false;
             if (!isHooked) {
-                const onPlat1 = Math.abs(loadPos.y - 102.5) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
-                const onPlat2 = Math.abs(loadPos.y - 112.5) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
+                const onPlat1 = Math.abs(loadPos.y - (LOWER_PLATFORM_TOP + LOAD_HALF_H)) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
+                const onPlat2 = Math.abs(loadPos.y - (UPPER_PLATFORM_TOP + LOAD_HALF_H)) < 0.01 && loadPos.x > -40 && loadPos.x < -20 && loadPos.z > -10 && loadPos.z < 10;
                 if (onPlat1 || onPlat2) winConditionMet = true;
             }
 
