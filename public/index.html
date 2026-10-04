@@ -709,8 +709,10 @@
             loadCad.matrix.copy(CAD_TO_SCENE).scale(new THREE.Vector3(MM_TO_FT, MM_TO_FT, MM_TO_FT));
             loadCad.matrix.setPosition(-centre.x, -centre.y, -centre.z);
         }
-        // Press O to flip the load upside down (to check which way up the CAD model should go)
+        // The CAD model comes in upside down (its lugs/feet must be at the bottom), so it starts flipped
+        // 180 degrees about its long axis. Press O to flip it back and forth to compare.
         const loadFlip = new THREE.Group();
+        loadFlip.rotation.x = Math.PI;
         loadFlip.add(loadCad);
         loadBox.add(loadFlip);
 
