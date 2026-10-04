@@ -79,6 +79,14 @@
         <p class="text-slate-300 mt-1">Load safely secured on the platform.</p>
     </div>
 
+    <!-- Game Over (touching the building) -->
+    <div id="gameover-msg" style="display:none" class="absolute top-1/3 left-1/2 transform -translate-x-1/2 panel px-10 py-6 rounded-xl shadow-2xl border border-red-500 text-center z-50 pointer-events-auto">
+        <h2 class="text-4xl font-bold text-red-400">GAME OVER</h2>
+        <p id="gameover-reason" class="text-slate-200 mt-2 text-lg"></p>
+        <button id="btn-restart" class="mt-4 bg-red-700 hover:bg-red-600 text-white py-2 px-6 rounded-lg font-bold border border-red-400 touch-manipulation">Restart (R)</button>
+        <p id="gameover-wait" style="display:none" class="text-slate-400 mt-3 text-sm">Waiting for the operator to restart...</p>
+    </div>
+
     <!-- PIP Camera Frame (Top Right) -->
     <div id="pip-border" class="absolute top-4 right-4 w-72 h-48 border border-slate-400/50 rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.8)] z-40 overflow-hidden pointer-events-none flex flex-col justify-between p-1 bg-black/10 backdrop-blur-[1px]">
         <div class="text-red-500 text-[10px] font-bold font-mono animate-pulse drop-shadow-md">● REC</div>
@@ -145,8 +153,10 @@
         const BUILDING_MIN_MM = [151713.6, 19337.6];     // model's min corner (X, Y), from the file
         const BAY_ANCHOR_FT = [35.9, 3.79];              // from that corner: bay centre along the edge, slab edge in front of it
         const BUILDING_ALIGN_RAD = Math.atan(0.0679);    // slope of the slab edge, measured from the model
-        const BUILDING_FACE_X = -20;                     // where the slab edge sits in the scene (the old platforms ended here)
-        const PAD = { minX: -38, maxX: -21, minZ: -8.5, maxZ: 8.5 }; // landing zone on that floor, between the fins
+        const BUILDING_FACE_X = -30;                     // where the slab edge sits in the scene (further from the crane = more room)
+        const BUILDING_COLOR = 0xc4bdae;                 // warm concrete; set to null to use the colours from the .mtl
+        const PAD = { minX: BUILDING_FACE_X - 18, maxX: BUILDING_FACE_X - 1, minZ: -8.5, maxZ: 8.5 }; // landing zone on that floor, between the fins
+        const PLATFORM_SPOT_Z = 7.8;                     // where the platform rigger stands: the corner of the bay, so the load can pass
         const LOAD_HANG = LOAD_HALF_H + SPREADER_DROP + SPREADER_DEPTH; // load centre below the rig tip (load top touches the beam)
         const SPREADER_CG_Y = RIG_HOOK_Y - SPREADER_DROP - SPREADER_DEPTH / 2; // spreader centre of gravity, in rig coordinates
         const SPREADER_HOOK_MM = [0, 0, 101.6];
@@ -282,7 +292,7 @@
         // floor: rigger standing on the ground near the load. platform: rigger on the edge of the
         // building's 2nd-last floor, at the slab edge in the bay. Floor/platform look at the load.
         const FLOOR_EYE_Y = 5.5;
-        const PLATFORM_EYE = new THREE.Vector3(BUILDING_FACE_X + 0.2, PLATFORM_TOP + 5.5, 0); // on the slab edge of the 2nd-last floor
+        const PLATFORM_EYE = new THREE.Vector3(BUILDING_FACE_X + 0.2, PLATFORM_TOP + 5.5, PLATFORM_SPOT_Z); // slab edge of the 2nd-last floor, at the corner of the bay
         let viewMode = 'orbit';
 
         // Floor/platform views follow the load until you drag to look around (mouse or touch).
@@ -354,7 +364,8 @@
         window.addEventListener('keydown', (e) => {
             if (e.target && e.target.tagName === 'INPUT') return;
             if (e.key.toLowerCase() === 'p') { spreaderMarkers.visible = !spreaderMarkers.visible; return; }
-            if (e.key.toLowerCase() === 'o') { loadFlip.rotation.x = loadFlip.rotation.x ? 0 : Math.PI; return; }
+            if (e.key.toLowerCase() === 'o') { loadFlip.rotation.x = loadFlip.rotation.x ? 0 : Math.PI; refreshLoadPoints(); return; }
+            if (e.key.toLowerCase() === 'r' && isHost && gameOver) { resetSim(); return; }
             if (e.key.toLowerCase() === 'l' && isFixedView()) { lookFree = false; return; }
             const mode = { '0': 'bird', '1': 'floor', '2': 'platform' }[e.key];
             if (mode && document.getElementById('btn-view-' + mode).style.display !== 'none') setView(mode);
@@ -362,7 +373,7 @@
 
         // --- RIGGERS: low-poly people (5'11", hard hat, hi-vis vest) at the viewers' positions ---
         const PERSON_HEIGHT = 5.917; // 5 ft 11 in, scene units are feet
-        const PLATFORM_FEET = new THREE.Vector3(BUILDING_FACE_X - 0.8, PLATFORM_TOP, 0); // standing on the slab, near its edge
+        const PLATFORM_FEET = new THREE.Vector3(BUILDING_FACE_X - 0.8, PLATFORM_TOP, PLATFORM_SPOT_Z); // standing on the slab, near its edge
 
         function makePerson() {
             const mat = (color) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.8 });
@@ -430,10 +441,15 @@
             socket.emit('view', msg);
         }
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        // Light: general fill so shaded sides are not dark, a sky/ground tint, and the sun with shadows
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
         scene.add(ambientLight);
+        scene.add(new THREE.HemisphereLight(0xdcecff, 0x8a9a6a, 0.5));
+        const fillLight = new THREE.DirectionalLight(0xfff2e0, 0.3); // from the side away from the sun, no shadows
+        fillLight.position.set(140, 80, -100);
+        scene.add(fillLight);
 
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
         // The shadow area is centred between the crane and the building (x -90..0, z -55..40, 112 ft tall)
         dirLight.position.set(-25, 200, 25);
         dirLight.target.position.set(-45, 0, -15);
@@ -490,10 +506,14 @@
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
+                    if (BUILDING_COLOR !== null) {
+                        child.material = new THREE.MeshStandardMaterial({ color: BUILDING_COLOR, roughness: 0.95, metalness: 0 });
+                    }
                     child.material.side = THREE.DoubleSide;
                 }
             });
             buildingCad.add(object);
+            buildBuildingGrid(object); // for the collision check
         };
         new THREE.MTLLoader().load('builing-test.mtl', (materials) => {
             materials.preload();
@@ -605,6 +625,7 @@
                         });
 
                         deviceGroup.add(object);
+                        rigLoaded(object);
                         console.log("SUCCESS: rig.obj and rig.mtl loaded.");
                     },
                     undefined,
@@ -631,6 +652,7 @@
                             }
                         });
                         deviceGroup.add(object);
+                        rigLoaded(object);
                     },
                     undefined,
                     function (err) {
@@ -695,6 +717,7 @@
                 }
             });
             spreaderCad.add(object);
+            spreaderLoaded(object);
         };
         spreaderMtlLoader.load('spreader.mtl', (materials) => {
             materials.preload();
@@ -781,6 +804,7 @@
             });
             loadCad.add(object);
             loadBox.material.visible = false; // hide the placeholder, keep the model (its child) visible
+            refreshLoadPoints();
         };
         new THREE.MTLLoader().load('load.mtl', (materials) => {
             materials.preload();
@@ -953,7 +977,8 @@
                     socket.on('stateUpdate', (s) => {
                         lastStateAt = performance.now();
                         hostGone = false;
-                        // [px, py, pz, theta, yaw, dcw, lx, ly, lz, isHooked, loadYaw, tau_total]
+                        // [px, py, pz, theta, yaw, dcw, lx, ly, lz, isHooked, loadYaw, tau_total, gameOver]
+                        gameOver = s[12] || 0;
                         netTarget.pivotPos.set(s[0], s[1], s[2]);
                         netTarget.theta = s[3];
                         netTarget.yaw = s[4];
@@ -1021,6 +1046,155 @@
             }
         }
 
+        // ========================================================
+        // TOUCHING THE BUILDING = GAME OVER
+        // ========================================================
+        // The building is turned into a 3D grid of 0.5 ft cells (a cell is "solid" if a surface passes
+        // through it). Points spread over the rig, the spreader and the load are checked against that
+        // grid every frame. The bottom 0.35 ft of the load is ignored so it can rest on the floor.
+        const VOXEL = 0.5;
+        let buildingGrid = null, bgx0 = 0, bgy0 = 0, bgz0 = 0, bnx = 0, bny = 0, bnz = 0;
+        let rigPoints = null, spreaderPoints = null, loadPoints = null; // x,y,z triples in each object's own frame
+        let gameOver = 0; // 0 = playing, 1 = rig, 2 = spreader, 3 = load touched the building
+        const GAME_OVER_TEXT = ['', 'The rig touched the building.', 'The spreader touched the building.', 'The load touched the building.'];
+
+        // Calls emit(x, y, z) for points spread over triangle abc, at most `step` ft apart
+        function sampleTriangle(a, b, c, step, emit) {
+            const n = Math.max(1, Math.ceil(a.distanceTo(b) / step));
+            const m = Math.max(1, Math.ceil(a.distanceTo(c) / step));
+            for (let i = 0; i <= n; i++) {
+                const u = i / n;
+                for (let j = 0; j <= m; j++) {
+                    const v = j / m;
+                    if (u + v > 1 + 1e-9) break;
+                    emit(a.x + (b.x - a.x) * u + (c.x - a.x) * v,
+                         a.y + (b.y - a.y) * u + (c.y - a.y) * v,
+                         a.z + (b.z - a.z) * u + (c.z - a.z) * v);
+                }
+            }
+        }
+
+        // Visits every triangle of a mesh tree with its corners in the frame of `reference` (null = world)
+        function forEachTriangle(root, reference, visit) {
+            root.updateWorldMatrix(true, true);
+            const inv = new THREE.Matrix4();
+            if (reference) { reference.updateWorldMatrix(true, false); inv.copy(reference.matrixWorld).invert(); }
+            const m = new THREE.Matrix4(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+            root.traverse((child) => {
+                if (!child.isMesh) return;
+                const pos = child.geometry.attributes.position;
+                m.multiplyMatrices(inv, child.matrixWorld);
+                for (let i = 0; i + 2 < pos.count; i += 3) {
+                    a.fromBufferAttribute(pos, i).applyMatrix4(m);
+                    b.fromBufferAttribute(pos, i + 1).applyMatrix4(m);
+                    c.fromBufferAttribute(pos, i + 2).applyMatrix4(m);
+                    visit(a, b, c);
+                }
+            });
+        }
+
+        // Points spread over a mesh's surface (one per `step` ft cell), in the frame of `reference`
+        function surfacePoints(root, reference, step, keep) {
+            const seen = new Set(), out = [];
+            forEachTriangle(root, reference, (a, b, c) => {
+                sampleTriangle(a, b, c, step, (x, y, z) => {
+                    if (keep && !keep(x, y, z)) return;
+                    const key = ((Math.floor(x / step) + 8192) * 16384 + (Math.floor(y / step) + 8192)) * 16384 + (Math.floor(z / step) + 8192);
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    out.push(x, y, z);
+                });
+            });
+            return new Float32Array(out);
+        }
+
+        function buildBuildingGrid(object) {
+            const t0 = performance.now();
+            object.updateWorldMatrix(true, true);
+            const box = new THREE.Box3().setFromObject(object).expandByScalar(1);
+            bgx0 = box.min.x; bgy0 = box.min.y; bgz0 = box.min.z;
+            bnx = Math.ceil((box.max.x - bgx0) / VOXEL); bny = Math.ceil((box.max.y - bgy0) / VOXEL); bnz = Math.ceil((box.max.z - bgz0) / VOXEL);
+            const grid = new Uint8Array(bnx * bny * bnz);
+            forEachTriangle(object, null, (a, b, c) => {
+                sampleTriangle(a, b, c, 0.25, (x, y, z) => {
+                    const ix = Math.floor((x - bgx0) / VOXEL), iy = Math.floor((y - bgy0) / VOXEL), iz = Math.floor((z - bgz0) / VOXEL);
+                    grid[(iy * bnz + iz) * bnx + ix] = 1;
+                });
+            });
+            buildingGrid = grid;
+            console.log('Collision grid built: ' + bnx + 'x' + bny + 'x' + bnz + ' cells in ' + Math.round(performance.now() - t0) + ' ms');
+        }
+
+        function rigLoaded(object) { rigPoints = surfacePoints(object, deviceGroup, 1.0); }
+        function spreaderLoaded(object) { spreaderPoints = surfacePoints(object, spreader, 0.5); }
+        function refreshLoadPoints() {
+            const model = loadCad.children[0];
+            if (!model) return;
+            loadPoints = surfacePoints(model, loadBox, 0.75, (x, y) => y > -LOAD_HALF_H + 0.35);
+        }
+
+        function anyPointInBuilding(points, matrix) {
+            if (!points) return false;
+            const e = matrix.elements;
+            for (let i = 0; i < points.length; i += 3) {
+                const x = points[i], y = points[i + 1], z = points[i + 2];
+                const ix = Math.floor((e[0] * x + e[4] * y + e[8] * z + e[12] - bgx0) / VOXEL);
+                const iy = Math.floor((e[1] * x + e[5] * y + e[9] * z + e[13] - bgy0) / VOXEL);
+                const iz = Math.floor((e[2] * x + e[6] * y + e[10] * z + e[14] - bgz0) / VOXEL);
+                if (ix < 0 || iy < 0 || iz < 0 || ix >= bnx || iy >= bny || iz >= bnz) continue;
+                if (buildingGrid[(iy * bnz + iz) * bnx + ix]) return true;
+            }
+            return false;
+        }
+
+        // 0 = no contact, otherwise which part touched (see GAME_OVER_TEXT)
+        function checkBuildingHit() {
+            if (!buildingGrid) return 0;
+            deviceGroup.updateMatrixWorld(true); spreader.updateMatrixWorld(true); loadBox.updateMatrixWorld(true);
+            if (anyPointInBuilding(rigPoints, deviceGroup.matrixWorld)) return 1;
+            if (anyPointInBuilding(spreaderPoints, spreader.matrixWorld)) return 2;
+            if (anyPointInBuilding(loadPoints, loadBox.matrixWorld)) return 3;
+            return 0;
+        }
+
+        function resetSim() {
+            pivotPos.set(0, 30, 0); pivotVel.set(0, 0, 0);
+            theta = 0; omega = 0; yaw = 0; yawVelocity = 0;
+            dcw = DCW_BALANCED; isHooked = false; isTaut = false;
+            const a = Math.random() * Math.PI * 2, r = Math.random() * 20;
+            loadPos.set(Math.cos(a) * r, LOAD_HALF_H, Math.sin(a) * r);
+            loadVelocity.set(0, 0, 0);
+            loadYaw = Math.random() * Math.PI * 2;
+            gameOver = 0;
+        }
+
+        const gameOverBox = document.getElementById('gameover-msg');
+        let shownGameOver = 0;
+        function updateGameOverUI() {
+            if (gameOver === shownGameOver) return;
+            shownGameOver = gameOver;
+            gameOverBox.style.display = gameOver ? '' : 'none';
+            if (gameOver) successMsg.classList.add('opacity-0');
+            document.getElementById('gameover-reason').textContent = GAME_OVER_TEXT[gameOver] || '';
+            document.getElementById('btn-restart').style.display = isHost ? '' : 'none';
+            document.getElementById('gameover-wait').style.display = isHost ? 'none' : '';
+        }
+        document.getElementById('btn-restart').addEventListener('click', (e) => { e.preventDefault(); if (isHost && gameOver) resetSim(); });
+
+        // Send the host's state to the viewers (about 30 times a second)
+        function emitState() {
+            if (socket && socket.connected && Date.now() - lastSyncTime > 33) {
+                // volatile: drop stale frames instead of queueing them on a slow link
+                socket.volatile.emit('stateUpdate', [
+                    pivotPos.x, pivotPos.y, pivotPos.z,
+                    theta, yaw, dcw,
+                    loadPos.x, loadPos.y, loadPos.z,
+                    isHooked ? 1 : 0, loadYaw, tau_total, gameOver
+                ]);
+                lastSyncTime = Date.now();
+            }
+        }
+
         const clock = new THREE.Clock();
         const uiState = document.getElementById('ui-state');
         const uiTorque = document.getElementById('ui-torque');
@@ -1030,8 +1204,11 @@
         let lastSyncTime = 0;
 
         function updatePhysics(dt) {
-            if (dt <= 0.001) return; 
-            if (dt > 0.1) dt = 0.1; 
+            if (dt <= 0.001) return;
+            if (dt > 0.1) dt = 0.1;
+
+            // After touching the building everything freezes until the operator restarts
+            if (isHost && gameOver) { emitState(); updateGameOverUI(); return; }
 
             if (isHost) {
                 let padAx = 0, padAy = 0, padAz = 0;
@@ -1244,16 +1421,7 @@
                 omega += alpha * dt;
                 theta += omega * dt;
 
-                if (socket && socket.connected && Date.now() - lastSyncTime > 33) { 
-                    // volatile: drop stale frames instead of queueing them on a slow link
-                    socket.volatile.emit('stateUpdate', [
-                        pivotPos.x, pivotPos.y, pivotPos.z,
-                        theta, yaw, dcw,
-                        loadPos.x, loadPos.y, loadPos.z,
-                        isHooked ? 1 : 0, loadYaw, tau_total
-                    ]);
-                    lastSyncTime = Date.now();
-                }
+                emitState();
             } else {
                 sendRigInput();
                 updateHostStatus();
@@ -1305,7 +1473,11 @@
             }
 
             loadBox.position.copy(loadPos);
-            loadBox.rotation.y = isHooked ? yaw : loadYaw; 
+            loadBox.rotation.y = isHooked ? yaw : loadYaw;
+
+            // Touching the building ends the game (the host decides; viewers get it in the state)
+            if (isHost && !gameOver) gameOver = checkBuildingHit();
+            updateGameOverUI();
 
             const hookBtn = document.getElementById('btn-hook');
             if (canRig) {

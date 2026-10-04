@@ -63,7 +63,7 @@ io.on('connection', (socket) => {
   // Host sends physics data (flat array), relayed to the viewers in the same room.
   socket.on('stateUpdate', (data) => {
     const name = socket.data.hostRoom;
-    if (!name || !Array.isArray(data) || data.length !== 12) return;
+    if (!name || !Array.isArray(data) || data.length !== 13) return;
     socket.volatile.to(name).emit('stateUpdate', data);
   });
 
