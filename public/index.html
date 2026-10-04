@@ -296,7 +296,7 @@
             if (!lookDrag.moved && Math.hypot(dx, dy) < 4) return; // ignore tiny jitters
             lookDrag.moved = true;
             if (!lookFree) startFreeLook();
-            lookYaw += dx * 0.005;
+            lookYaw -= dx * 0.005; // drag right = look right
             lookPitch = Math.max(-1.5, Math.min(1.5, lookPitch + dy * 0.005));
             lookDrag.x = e.clientX;
             lookDrag.y = e.clientY;
@@ -490,8 +490,12 @@
         deviceGroup.rotation.order = "YXZ"; 
         scene.add(deviceGroup);
         
-        // Moved camera 16.68ft down, 5.5ft forward (-X direction), and 1.3ft right (Z direction)
-        pipCamera.position.set(-5.5, -16.68, 1.3); 
+        // CAM 2 (under-beam): hangs under the rig on its RIGHT side (looking toward the hook, right is -Z),
+        // just outside the rig body (which is about +/-2.17 ft wide). It keeps the old distance from the
+        // pivot (17.61 ft), so x is worked out from that distance.
+        const PIP_DIST = Math.hypot(5.5, 16.68, 1.3);
+        const PIP_Y = -16.68, PIP_Z = -2.5;
+        pipCamera.position.set(-Math.sqrt(PIP_DIST ** 2 - PIP_Y ** 2 - PIP_Z ** 2), PIP_Y, PIP_Z);
         deviceGroup.add(pipCamera);
 
         const yellowPaint = new THREE.MeshStandardMaterial({ color: 0xffaa00, roughness: 0.4, metalness: 0.2 });
