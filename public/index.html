@@ -44,6 +44,10 @@
                 <span class="text-slate-400">Counterweight:</span>
                 <span id="ui-cw" class="font-mono bg-slate-800 px-2 py-1 rounded">3.9 ft</span>
             </div>
+            <div class="flex justify-between items-center">
+                <span id="ui-align-label" class="text-slate-400">Spreader vs rig:</span>
+                <span id="ui-align" class="font-mono bg-slate-800 px-2 py-1 rounded text-xs">0° in line</span>
+            </div>
             <div id="row-remote" class="flex justify-between items-center" style="display:none">
                 <span class="text-slate-400">Rigger input:</span>
                 <span id="ui-remote" class="font-mono bg-slate-800 px-2 py-1 rounded text-xs">none</span>
@@ -111,7 +115,9 @@
         <button id="btn-cw-back" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Bal Back</button>
         <button id="btn-rot-ccw" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CCW</button>
         <button id="btn-rot-cw" class="panel py-4 rounded-lg border border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg touch-manipulation">Rot CW</button>
-        <button id="btn-hook" class="col-span-2 panel py-4 rounded-xl border border-amber-500 text-amber-400 font-bold active:bg-amber-800 shadow-lg touch-manipulation transition-all duration-200 mt-2">Action: Hook (Out of Range)</button>
+        <button id="btn-tag-ccw" class="panel py-4 rounded-lg border border-teal-500 text-teal-300 font-bold active:bg-teal-800 shadow-lg touch-manipulation">Tag CCW (Z)</button>
+        <button id="btn-tag-cw" class="panel py-4 rounded-lg border border-teal-500 text-teal-300 font-bold active:bg-teal-800 shadow-lg touch-manipulation">Tag CW (X)</button>
+        <button id="btn-hook" class="col-span-2 panel py-4 rounded-xl border border-amber-500 text-amber-400 font-bold active:bg-amber-800 shadow-lg touch-manipulation transition-all duration-200 mt-2">Strap: lower the spreader onto the load</button>
     </div>
 
     <div id="canvas-container"></div>
@@ -153,7 +159,7 @@
         const BUILDING_MIN_MM = [151713.6, 19337.6];     // model's min corner (X, Y), from the file
         const BAY_ANCHOR_FT = [35.9, 3.79];              // from that corner: bay centre along the edge, slab edge in front of it
         const BUILDING_ALIGN_RAD = Math.atan(0.0679);    // slope of the slab edge, measured from the model
-        const BUILDING_FACE_X = -30;                     // where the slab edge sits in the scene (further from the crane = more room)
+        const BUILDING_FACE_X = -40;                     // where the slab edge sits in the scene (further from the crane = more room)
         const BUILDING_COLOR = 0xc4bdae;                 // warm concrete; set to null to use the colours from the .mtl
         const PAD = { minX: BUILDING_FACE_X - 18, maxX: BUILDING_FACE_X - 1, minZ: -8.5, maxZ: 8.5 }; // landing zone on that floor, between the fins
         const PLATFORM_SPOT_Z = 7.8;                     // where the platform rigger stands: the corner of the bay, so the load can pass
@@ -169,12 +175,28 @@
         // that balances the rig with the bare hook + spreader (so adding mass moves this, not the feel).
         const DEV_CG_X = 1.75;
         const DCW_BALANCED = (-RIG_HOOK_X * (M_HOOK + M_SPREADER) - DEV_CG_X * M_DEV) / M_CW;
+
+        // --- STRAPPING THE LOAD AND TURNING IT WITH TAG LINES ---
+        // 1) Lower the spreader onto the load and turn it (tag lines) to match the load, then Strap.
+        // 2) Lift a little and turn the strapped load in line with the rig, then lift to height and deliver.
+        const SPREADER_LEN_FT = 21.01;
+        const STRAP_XZ = 1.5;                    // spreader centre within this distance (ft) of the load centre, sideways
+        const STRAP_Y = 0.6;                     // ...and within this (ft) of sitting on the load, vertically
+        const STRAP_ANGLE = 8 * Math.PI / 180;   // ...and within 8 degrees of the load's heading
+        const INLINE_ANGLE = 3 * Math.PI / 180;  // "in line with the rig" when within 3 degrees
+        const TAG_FORCE_LBF = 40;                // a rigger pulling a tag line...
+        const TAG_ARM_FT = 10.5;                 // ...at the end of the 21 ft spreader
+        const TAG_DAMPING = 0.5;                 // 1/s: swivel friction and air
+        let strapOffset = 0;                     // heading difference between spreader and load while strapped (0 or 180 degrees)
         
         let theta = 0;      
         let omega = 0;
         let tau_total = 0;
         let yaw = 0;        
         let yawVelocity = 0;
+        // The spreader hangs on a swivel, so it has its own heading (world yaw) and does not turn with the rig.
+        // Riggers turn it by hand with tag lines; once the load is strapped on, the load turns with it.
+        let spreaderYaw = 0, spreaderYawVel = 0;
         let dcw = DCW_BALANCED; // starts where the rig is balanced with the bare hook and spreader
         let isHooked = false;
         
@@ -203,9 +225,9 @@
         const keys = {};
         let gamepadHookTriggered = false; 
         const btnStates = { 
-            cwFwd: false, cwBack: false, rotCCW: false, rotCW: false,
+            cwFwd: false, cwBack: false, rotCCW: false, rotCW: false, tagCCW: false, tagCW: false,
             transFwd: false, transBack: false, transLeft: false, transRight: false,
-            hoistUp: false, hoistDown: false 
+            hoistUp: false, hoistDown: false
         };
 
         // ADDED: Safety catch to clear stuck keys if you click away to another window
@@ -229,10 +251,10 @@
         // Who controls what. Offline: everything. Host (operator): move + hoist.
         // Viewer: counterweight, rotation, hook (sent to the host, which runs the physics).
         let canMove = true, canRig = true;
-        // Viewer input as a bitmask: 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW. The host holds each bit
-        // for at least 150 ms after it arrives, so a quick tap still moves the rig.
+        // Viewer input as a bitmask: 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW, 16 tagCCW, 32 tagCW. The host
+        // holds each bit for at least 150 ms after it arrives, so a quick tap still has an effect.
         let remoteMask = 0;
-        const remoteHold = { 1: 0, 2: 0, 4: 0, 8: 0 };
+        const remoteHold = { 1: 0, 2: 0, 4: 0, 8: 0, 16: 0, 32: 0 };
         const remoteBit = (bit) => (remoteMask & bit) !== 0 || performance.now() < remoteHold[bit];
         let lastInputMask = 0;
 
@@ -241,7 +263,9 @@
             const mask = ((btnStates.cwFwd || keys['q']) ? 1 : 0)
                        | ((btnStates.cwBack || keys['e']) ? 2 : 0)
                        | ((btnStates.rotCCW || keys['arrowleft']) ? 4 : 0)
-                       | ((btnStates.rotCW || keys['arrowright']) ? 8 : 0);
+                       | ((btnStates.rotCW || keys['arrowright']) ? 8 : 0)
+                       | ((btnStates.tagCCW || keys['z']) ? 16 : 0)
+                       | ((btnStates.tagCW || keys['x']) ? 32 : 0);
             if (mask !== lastInputMask) {
                 lastInputMask = mask;
                 socket.emit('input', mask);
@@ -262,7 +286,7 @@
             const show = (id, on) => { document.getElementById(id).style.display = on ? '' : 'none'; };
             show('dpad', canMove);
             ['btn-hoist-up', 'btn-hoist-down'].forEach(id => show(id, canMove));
-            ['btn-cw-fwd', 'btn-cw-back', 'btn-rot-ccw', 'btn-rot-cw', 'btn-hook'].forEach(id => show(id, canRig));
+            ['btn-cw-fwd', 'btn-cw-back', 'btn-rot-ccw', 'btn-rot-cw', 'btn-tag-ccw', 'btn-tag-cw', 'btn-hook'].forEach(id => show(id, canRig));
         }
 
         const container = document.getElementById('canvas-container');
@@ -331,8 +355,8 @@
             lookFree = false;
             scene.fog.density = (mode === 'bird') ? 0.0005 : 0.005; // no haze when viewed from far above
             if (mode === 'bird') {
-                camera.position.set(-20, 215, 215); // wide enough for the crane and the whole building
-                controls.target.set(-35, 50, -8);
+                camera.position.set(-25, 225, 225); // wide enough for the crane and the whole building
+                controls.target.set(-45, 50, -8);
                 controls.enabled = true;
                 controls.update();
             } else if (mode === 'floor') {
@@ -451,8 +475,8 @@
 
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
         // The shadow area is centred between the crane and the building (x -90..0, z -55..40, 112 ft tall)
-        dirLight.position.set(-25, 200, 25);
-        dirLight.target.position.set(-45, 0, -15);
+        dirLight.position.set(-35, 200, 25);
+        dirLight.target.position.set(-55, 0, -15);
         dirLight.castShadow = true;
         dirLight.shadow.camera.left = -110;
         dirLight.shadow.camera.right = 110;
@@ -881,6 +905,8 @@
         setupBtn('btn-cw-back', 'cwBack', 'rig');
         setupBtn('btn-rot-ccw', 'rotCCW', 'rig');
         setupBtn('btn-rot-cw', 'rotCW', 'rig');
+        setupBtn('btn-tag-ccw', 'tagCCW', 'rig');
+        setupBtn('btn-tag-cw', 'tagCW', 'rig');
         setupBtn('btn-trans-fwd', 'transFwd', 'move');
         setupBtn('btn-trans-back', 'transBack', 'move');
         setupBtn('btn-trans-left', 'transLeft', 'move');
@@ -897,7 +923,7 @@
         const uiNetwork = document.getElementById('ui-network');
         
         // Viewer-side smoothing: packets arrive ~30 Hz, rendering runs at display rate.
-        const netTarget = { pivotPos: new THREE.Vector3(), loadPos: new THREE.Vector3(), theta: 0, yaw: 0, dcw: 0 };
+        const netTarget = { pivotPos: new THREE.Vector3(), loadPos: new THREE.Vector3(), theta: 0, yaw: 0, dcw: 0, spreaderYaw: 0, loadYaw: 0 };
         let netHasState = false;
 
         function initNetwork(role) {
@@ -961,9 +987,9 @@
                     // Combined input of all viewers: bit 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW
                     socket.on('input', (m) => {
                         const now = performance.now();
-                        for (const bit of [1, 2, 4, 8]) if (m & bit) remoteHold[bit] = now + 150;
+                        for (const bit of [1, 2, 4, 8, 16, 32]) if (m & bit) remoteHold[bit] = now + 150;
                         remoteMask = m;
-                        const names = ['Bal Fwd', 'Bal Back', 'Rot CCW', 'Rot CW'].filter((_, i) => m & (1 << i));
+                        const names = ['Bal Fwd', 'Bal Back', 'Rot CCW', 'Rot CW', 'Tag CCW', 'Tag CW'].filter((_, i) => m & (1 << i));
                         document.getElementById('ui-remote').textContent = names.join(' + ') || 'none';
                     });
                     socket.on('hook', () => {
@@ -977,7 +1003,7 @@
                     socket.on('stateUpdate', (s) => {
                         lastStateAt = performance.now();
                         hostGone = false;
-                        // [px, py, pz, theta, yaw, dcw, lx, ly, lz, isHooked, loadYaw, tau_total, gameOver]
+                        // [px, py, pz, theta, yaw, dcw, lx, ly, lz, isHooked, loadYaw, tau_total, gameOver, spreaderYaw]
                         gameOver = s[12] || 0;
                         netTarget.pivotPos.set(s[0], s[1], s[2]);
                         netTarget.theta = s[3];
@@ -985,14 +1011,17 @@
                         netTarget.dcw = s[5];
                         netTarget.loadPos.set(s[6], s[7], s[8]);
                         isHooked = s[9] === 1;
-                        loadYaw = s[10];
+                        netTarget.loadYaw = s[10];
                         tau_total = s[11];
+                        netTarget.spreaderYaw = s[13];
                         if (!netHasState) {
                             pivotPos.copy(netTarget.pivotPos);
                             loadPos.copy(netTarget.loadPos);
                             theta = netTarget.theta;
                             yaw = netTarget.yaw;
                             dcw = netTarget.dcw;
+                            spreaderYaw = netTarget.spreaderYaw;
+                            loadYaw = netTarget.loadYaw;
                             netHasState = true;
                         }
                     });
@@ -1026,23 +1055,41 @@
         const globalHookPos = new THREE.Vector3();
         const spreaderTip = new THREE.Vector3();
 
+        // Smallest turn (-90..+90 degrees) that makes heading a parallel to heading b: the bar and the load
+        // look the same pointing either way.
+        function angDiffPi(a, b) {
+            let d = (a - b) % Math.PI;
+            if (d > Math.PI / 2) d -= Math.PI;
+            if (d <= -Math.PI / 2) d += Math.PI;
+            return d;
+        }
+
+        // Can the load be strapped on right now? Spreader sitting on it, and lined up with it.
+        function strapStatus() {
+            const dxz = Math.hypot(globalHookPos.x - loadPos.x, globalHookPos.z - loadPos.z);
+            const dy = (globalHookPos.y - LOAD_HANG) - loadPos.y; // 0 when the spreader rests on the load
+            const dAng = angDiffPi(spreaderYaw, loadYaw);
+            const placed = dxz <= STRAP_XZ && Math.abs(dy) <= STRAP_Y;
+            const aligned = Math.abs(dAng) <= STRAP_ANGLE;
+            return { placed, aligned, dAng, ok: placed && aligned };
+        }
+
         function toggleHook() {
-            // A viewer asks the host to hook/unhook; the host checks the range.
+            // A viewer asks the host to strap/unstrap; the host checks the conditions.
             if (networkRole === 'Viewer') {
                 if (socket && socket.connected) socket.emit('hook');
                 return;
             }
             hookVisual.getWorldPosition(globalHookPos);
             if (!isHooked) {
-                const dist = globalHookPos.distanceTo(loadPos);
-                if (dist < L_CABLE + 4.0) { 
+                const s = strapStatus();
+                if (s.ok) {
                     isHooked = true;
-                    yaw = loadYaw;
-                    yawVelocity = 0; 
+                    loadYaw += s.dAng;                  // take up the last few degrees so the load sits square on the bar
+                    strapOffset = spreaderYaw - loadYaw; // 0 (or 180 degrees) from here on
                 }
             } else {
-                isHooked = false;
-                loadYaw = yaw;
+                isHooked = false;                        // the load keeps its heading
             }
         }
 
@@ -1160,6 +1207,7 @@
         function resetSim() {
             pivotPos.set(0, 30, 0); pivotVel.set(0, 0, 0);
             theta = 0; omega = 0; yaw = 0; yawVelocity = 0;
+            spreaderYaw = 0; spreaderYawVel = 0; strapOffset = 0;
             dcw = DCW_BALANCED; isHooked = false; isTaut = false;
             const a = Math.random() * Math.PI * 2, r = Math.random() * 20;
             loadPos.set(Math.cos(a) * r, LOAD_HALF_H, Math.sin(a) * r);
@@ -1189,7 +1237,7 @@
                     pivotPos.x, pivotPos.y, pivotPos.z,
                     theta, yaw, dcw,
                     loadPos.x, loadPos.y, loadPos.z,
-                    isHooked ? 1 : 0, loadYaw, tau_total, gameOver
+                    isHooked ? 1 : 0, loadYaw, tau_total, gameOver, spreaderYaw
                 ]);
                 lastSyncTime = Date.now();
             }
@@ -1200,6 +1248,8 @@
         const uiTorque = document.getElementById('ui-torque');
         const uiCw = document.getElementById('ui-cw');
         const successMsg = document.getElementById('success-msg');
+        const uiAlign = document.getElementById('ui-align');
+        const uiAlignLabel = document.getElementById('ui-align-label');
         
         let lastSyncTime = 0;
 
@@ -1316,8 +1366,22 @@
                 if (inRotCW) yawAlpha -= appliedYawTorque / I_yaw;
                 
                 yawVelocity += yawAlpha * dt;
-                yawVelocity *= (1.0 - 0.15 * dt); 
+                yawVelocity *= (1.0 - 0.15 * dt);
                 yaw += yawVelocity * dt;
+
+                // The spreader turns on its swivel: only the riggers' tag lines turn it, the rig does not.
+                // Once the load is strapped on, it has to turn the load too.
+                const I_hang = (M_SPREADER / g) * (SPREADER_LEN_FT ** 2 / 12)
+                             + (isHooked ? (M_LOAD / g) * ((LOAD_SIZE_FT[0] ** 2 + LOAD_SIZE_FT[2] ** 2) / 12) : 0);
+                const inTagCCW = canRig ? (btnStates.tagCCW || keys['z']) : remoteBit(16);
+                const inTagCW  = canRig ? (btnStates.tagCW  || keys['x']) : remoteBit(32);
+                let tagAlpha = 0;
+                if (inTagCCW) tagAlpha += TAG_FORCE_LBF * TAG_ARM_FT / I_hang;
+                if (inTagCW)  tagAlpha -= TAG_FORCE_LBF * TAG_ARM_FT / I_hang;
+                spreaderYawVel += tagAlpha * dt;
+                spreaderYawVel *= (1.0 - TAG_DAMPING * dt);
+                spreaderYaw += spreaderYawVel * dt;
+                if (isHooked) loadYaw = spreaderYaw - strapOffset;
 
                 if (inCwFwd) dcw -= 5 * dt;
                 if (inCwBack) dcw += 5 * dt;
@@ -1432,6 +1496,8 @@
                     theta += (netTarget.theta - theta) * k;
                     yaw += (netTarget.yaw - yaw) * k;
                     dcw += (netTarget.dcw - dcw) * k;
+                    spreaderYaw += (netTarget.spreaderYaw - spreaderYaw) * k;
+                    loadYaw += (netTarget.loadYaw - loadYaw) * k;
                 }
             }
 
@@ -1445,7 +1511,7 @@
             deviceGroup.updateMatrixWorld(true);
             hookVisual.getWorldPosition(spreaderTip);
             spreader.position.set(spreaderTip.x, spreaderTip.y - SPREADER_DROP, spreaderTip.z);
-            spreader.rotation.y = yaw;
+            spreader.rotation.y = spreaderYaw;
 
             gantry.position.set(pivotPos.x, pivotPos.y + 200, pivotPos.z);
             gantryCable.position.set(pivotPos.x, pivotPos.y + 100, pivotPos.z);
@@ -1473,7 +1539,7 @@
             }
 
             loadBox.position.copy(loadPos);
-            loadBox.rotation.y = isHooked ? yaw : loadYaw;
+            loadBox.rotation.y = loadYaw;
 
             // Touching the building ends the game (the host decides; viewers get it in the state)
             if (isHost && !gameOver) gameOver = checkBuildingHit();
@@ -1481,20 +1547,17 @@
 
             const hookBtn = document.getElementById('btn-hook');
             if (canRig) {
-                const distToLoad = globalHookPos.distanceTo(loadPos);
-                if (!isHooked && distToLoad < L_CABLE + 4.0) {
-                    hookBtn.classList.add('shadow-[0_0_15px_rgba(34,197,94,0.5)]', 'border-green-500', 'text-green-400');
-                    hookBtn.classList.remove('border-amber-500', 'text-amber-400');
-                    hookBtn.textContent = "Action: Hook Ready! (SPACE)";
-                } else if (isHooked) {
-                    hookBtn.classList.remove('shadow-[0_0_15px_rgba(34,197,94,0.5)]', 'border-green-500', 'text-green-400');
-                    hookBtn.classList.add('border-amber-500', 'text-amber-400');
-                    hookBtn.textContent = "Action: Drop Load (SPACE)";
-                } else {
-                    hookBtn.classList.remove('shadow-[0_0_15px_rgba(34,197,94,0.5)]', 'border-green-500', 'text-green-400');
-                    hookBtn.classList.add('border-amber-500', 'text-amber-400');
-                    hookBtn.textContent = "Action: Hook (Out of Range)";
-                }
+                const s = strapStatus();
+                const ready = !isHooked && s.ok;
+                hookBtn.classList.toggle('shadow-[0_0_15px_rgba(34,197,94,0.5)]', ready);
+                hookBtn.classList.toggle('border-green-500', ready);
+                hookBtn.classList.toggle('text-green-400', ready);
+                hookBtn.classList.toggle('border-amber-500', !ready);
+                hookBtn.classList.toggle('text-amber-400', !ready);
+                if (isHooked) hookBtn.textContent = "Unstrap / Drop Load (SPACE)";
+                else if (s.ok) hookBtn.textContent = "Strap Ready! (SPACE)";
+                else if (s.placed) hookBtn.textContent = `Strap: turn the spreader ${Math.round(Math.abs(s.dAng) * 180 / Math.PI)}° more (Z / X)`;
+                else hookBtn.textContent = "Strap: lower the spreader onto the load";
             } else {
                 hookBtn.textContent = "Operator (hook handled by rigger)";
                 hookBtn.classList.add('opacity-50', 'cursor-not-allowed');
@@ -1502,6 +1565,13 @@
 
             uiTorque.textContent = `${Math.round(tau_total).toLocaleString()} lb·ft`;
             uiCw.textContent = `${dcw.toFixed(1)} ft`;
+
+            // How far the spreader (and the load, once strapped) is from being in line with the rig
+            const dRig = angDiffPi(spreaderYaw, yaw);
+            const inLine = Math.abs(dRig) <= INLINE_ANGLE;
+            uiAlignLabel.textContent = isHooked ? 'Load vs rig:' : 'Spreader vs rig:';
+            uiAlign.textContent = `${Math.round(Math.abs(dRig) * 180 / Math.PI)}° ` + (inLine ? 'IN LINE' : (dRig > 0 ? 'turn CW' : 'turn CCW'));
+            uiAlign.className = 'font-mono bg-slate-800 px-2 py-1 rounded text-xs ' + (inLine ? 'text-green-400' : 'text-amber-400');
 
             // CHANGED: Fixed the UI Bug where Forward and Backward text were swapped!
             if (Math.abs(tau_total) < 20000) {

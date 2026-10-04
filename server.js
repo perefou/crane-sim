@@ -8,7 +8,7 @@ const io = require('socket.io')(http, { transports: ['websocket'] });
 app.use(express.static(path.join(__dirname, 'public')));
 
 // room name -> { host: socket id, viewers: Map(socket id -> input bitmask) }
-// Input bitmask: 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW
+// Input bitmask: 1 cwFwd, 2 cwBack, 4 rotCCW, 8 rotCW, 16 tagCCW, 32 tagCW
 const rooms = new Map();
 const validRoom = (r) => typeof r === 'string' && /^[\w-]{1,20}$/.test(r);
 
@@ -63,14 +63,14 @@ io.on('connection', (socket) => {
   // Host sends physics data (flat array), relayed to the viewers in the same room.
   socket.on('stateUpdate', (data) => {
     const name = socket.data.hostRoom;
-    if (!name || !Array.isArray(data) || data.length !== 13) return;
+    if (!name || !Array.isArray(data) || data.length !== 14) return;
     socket.volatile.to(name).emit('stateUpdate', data);
   });
 
   // A viewer sends which counterweight/rotation buttons it holds; the host gets the combined mask.
   socket.on('input', (mask) => {
     const room = rooms.get(socket.data.viewerRoom);
-    if (!room || !Number.isInteger(mask) || mask < 0 || mask > 15) return;
+    if (!room || !Number.isInteger(mask) || mask < 0 || mask > 63) return;
     room.viewers.set(socket.id, mask);
     io.to(room.host).emit('input', combinedInput(room));
   });
