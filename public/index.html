@@ -29,7 +29,7 @@
         <div class="flex justify-between items-start mb-1">
             <h1 class="text-xl font-bold text-blue-400 text-glow">Heavy Rig Sim</h1>
         </div>
-        <p class="text-xs text-slate-300 mb-4 border-b border-slate-600 pb-4">7,000 lbs Load. 1,200 lbs Spreader. 13,000 lbs Rig.</p>
+        <p class="text-xs text-slate-300 mb-4 border-b border-slate-600 pb-4">6,000 lbs Load. 1,200 lbs Spreader. 13,000 lbs Rig.</p>
         
         <div class="space-y-3 text-sm">
             <div class="flex justify-between items-center">
@@ -117,7 +117,7 @@
         const g = 32.2; 
         const M_HOOK = 200; 
         const M_CW = 9000; 
-        const M_LOAD = 7000; 
+        const M_LOAD = 6000;
         const M_DEV = 13000;
 
         // --- SPREADER BAR (spreader.obj/.mtl: millimetres, centred on the origin) ---
@@ -154,7 +154,8 @@
         let pivotVel = new THREE.Vector3(0, 0, 0);
         const MAX_TRANS_SPEED = 5.0; 
         const TRANS_ACCEL = 8.0; 
-        const TRANS_FRICTION = 4.0; 
+        const TRANS_FRICTION = 4.0;
+        const VERT_FRICTION = 3.0; // ft/s^2 the hoist coasts down after you let go (5 ft/s takes ~1.7 s and ~4 ft to stop)
         
         const L_CABLE = 7.0; 
         let loadPos = new THREE.Vector3();
@@ -1001,14 +1002,14 @@
                     pivotVel.z *= scale;
                 }
 
-                // 2. Vertical Physics (Crane Brake)
+                // 2. Vertical Physics: the rig coasts to a stop when you let go of the hoist
                 if (isHoisting) {
                     pivotVel.y += ay * dt;
                     if (Math.abs(pivotVel.y) > MAX_TRANS_SPEED) {
                         pivotVel.y = Math.sign(pivotVel.y) * MAX_TRANS_SPEED;
                     }
                 } else {
-                    pivotVel.y = 0; // The Instant Crane Brake
+                    pivotVel.y -= Math.sign(pivotVel.y) * Math.min(Math.abs(pivotVel.y), VERT_FRICTION * dt);
                 }
 
                 pivotPos.addScaledVector(pivotVel, dt);
