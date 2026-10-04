@@ -29,7 +29,7 @@
         <div class="flex justify-between items-start mb-1">
             <h1 class="text-xl font-bold text-blue-400 text-glow">Heavy Rig Sim</h1>
         </div>
-        <p class="text-xs text-slate-300 mb-4 border-b border-slate-600 pb-4">7,000 lbs Load. 13,000 lbs Rig.</p>
+        <p class="text-xs text-slate-300 mb-4 border-b border-slate-600 pb-4">7,000 lbs Load. 1,200 lbs Spreader. 13,000 lbs Rig.</p>
         
         <div class="space-y-3 text-sm">
             <div class="flex justify-between items-center">
@@ -56,7 +56,7 @@
     </div>
 
     <!-- Multiplayer Setup Panel -->
-    <div id="multiplayer-panel" class="absolute top-4 left-[20rem] panel p-4 rounded-xl shadow-2xl border border-teal-500 w-80 pointer-events-auto z-40">
+    <div id="multiplayer-panel" class="absolute top-16 left-[20rem] panel p-4 rounded-xl shadow-2xl border border-teal-500 w-80 pointer-events-auto z-40">
         <h2 class="text-lg font-bold text-teal-400 mb-2">Live Session</h2>
         <input id="room-code" type="text" maxlength="20" value="main" placeholder="Room code" class="w-full mb-2 px-2 py-1 rounded-lg text-sm bg-slate-800 border border-slate-600 text-white text-center">
         <div class="grid grid-cols-2 gap-2">
@@ -118,14 +118,35 @@
         const M_HOOK = 200; 
         const M_CW = 9000; 
         const M_LOAD = 7000; 
-        const M_DEV = 13000; 
+        const M_DEV = 13000;
+
+        // --- SPREADER BAR (spreader.obj/.mtl: millimetres, centred on the origin) ---
+        // In the model the long axis is Y and the thickness is Z; the beam is 6" x 8", with a 48" wide
+        // plate at each end. It hangs from a ball joint 8" below the rig tip. The hooking point is the
+        // top centre of the beam; the 4 rigging points are the plate corners (24" sides, 87.79" front/back).
+        const M_SPREADER = 1200;
+        const MM_TO_FT = 1 / 304.8;
+        const SPREADER_DROP = 8 / 12;     // hooking point hangs 8" below the rig tip
+        const SPREADER_DEPTH = 8 / 12;    // beam depth
+        const LOAD_HANG = 2.5 + SPREADER_DROP + SPREADER_DEPTH; // load centre below the rig tip (load top touches the beam)
+        const SPREADER_CG_Y = RIG_HOOK_Y - SPREADER_DROP - SPREADER_DEPTH / 2; // spreader centre of gravity, in rig coordinates
+        const SPREADER_HOOK_MM = [0, 0, 101.6];
+        const SPREADER_RIG_MM = [ // order: 1 front-right, 2 front-left, 3 back-left, 4 back-right
+            [609.6, 87.79 * 25.4, 152.4], [-609.6, 87.79 * 25.4, 152.4],
+            [-609.6, -87.79 * 25.4, 152.4], [609.6, -87.79 * 25.4, 152.4]
+        ];
+
+        // Device centre of gravity (ft in front of / behind the axle) and the counterweight position
+        // that balances the rig with the bare hook + spreader (so adding mass moves this, not the feel).
+        const DEV_CG_X = 1.75;
+        const DCW_BALANCED = (-RIG_HOOK_X * (M_HOOK + M_SPREADER) - DEV_CG_X * M_DEV) / M_CW;
         
         let theta = 0;      
         let omega = 0;
         let tau_total = 0;
         let yaw = 0;        
         let yawVelocity = 0;
-        let dcw = -2.0; // START FORWARD (-2 feet) to balance the bare hook     
+        let dcw = DCW_BALANCED; // starts where the rig is balanced with the bare hook and spreader
         let isHooked = false;
         
         // Raised starting height from 16 to 30 so the hook starts above ground
@@ -303,6 +324,7 @@
         }
         window.addEventListener('keydown', (e) => {
             if (e.target && e.target.tagName === 'INPUT') return;
+            if (e.key.toLowerCase() === 'p') { spreaderMarkers.visible = !spreaderMarkers.visible; return; }
             if (e.key.toLowerCase() === 'l' && isFixedView()) { lookFree = false; return; }
             const mode = { '0': 'bird', '1': 'floor', '2': 'platform' }[e.key];
             if (mode && document.getElementById('btn-view-' + mode).style.display !== 'none') setView(mode);
@@ -559,6 +581,67 @@
         hookVisual.castShadow = true;
         deviceGroup.add(hookVisual);
 
+        // ========================================================
+        // 2b. SPREADER BAR (hangs 8" below the rig tip)
+        // ========================================================
+        // `spreader` hangs plumb under the hook point and turns with the rig. Its ball-joint swing will rotate it.
+        const spreader = new THREE.Group();
+        scene.add(spreader);
+
+        // Model axes -> scene axes: model Y (long axis) -> scene X, model Z (thickness/up) -> scene Y, model X -> scene Z.
+        // If the spreader looks turned or flipped, this matrix is the one place to change.
+        const CAD_TO_SCENE = new THREE.Matrix4().set(
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            1, 0, 0, 0,
+            0, 0, 0, 1);
+        const spreaderCad = new THREE.Group(); // holds the model and the markers, all in millimetres
+        spreaderCad.matrixAutoUpdate = false;
+        {
+            const hookInScene = new THREE.Vector3(...SPREADER_HOOK_MM).multiplyScalar(MM_TO_FT).applyMatrix4(CAD_TO_SCENE);
+            spreaderCad.matrix.copy(CAD_TO_SCENE).scale(new THREE.Vector3(MM_TO_FT, MM_TO_FT, MM_TO_FT));
+            spreaderCad.matrix.setPosition(-hookInScene.x, -hookInScene.y, -hookInScene.z); // hooking point sits at the joint
+        }
+        spreader.add(spreaderCad);
+
+        // Markers: yellow = hooking point, orange = the 4 rigging points. Toggle with P.
+        const spreaderMarkers = new THREE.Group();
+        {
+            const marker = (mm, color, radiusMm) => {
+                const m = new THREE.Mesh(new THREE.SphereGeometry(radiusMm, 12, 8), new THREE.MeshBasicMaterial({ color }));
+                m.position.set(...mm);
+                spreaderMarkers.add(m);
+            };
+            marker(SPREADER_HOOK_MM, 0xffe600, 110);
+            for (const p of SPREADER_RIG_MM) marker(p, 0xff6a00, 90);
+        }
+        spreaderCad.add(spreaderMarkers);
+
+        const spreaderMtlLoader = new THREE.MTLLoader();
+        const addSpreaderModel = (object) => {
+            object.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    child.material.side = THREE.DoubleSide; // CAD face winding is not guaranteed
+                }
+            });
+            spreaderCad.add(object);
+        };
+        spreaderMtlLoader.load('spreader.mtl', (materials) => {
+            materials.preload();
+            const loader = new THREE.OBJLoader();
+            loader.setMaterials(materials);
+            loader.load('spreader.obj', addSpreaderModel, undefined, () => console.log('FAIL: spreader.obj not found.'));
+        }, undefined, () => {
+            console.log('WARNING: spreader.mtl missing, loading spreader.obj with plain steel.');
+            const loader = new THREE.OBJLoader();
+            loader.load('spreader.obj', (object) => {
+                object.traverse((child) => { if (child.isMesh) child.material = darkMetal; });
+                addSpreaderModel(object);
+            }, undefined, () => console.log('FAIL: spreader.obj not found.'));
+        });
+
 
         // ========================================================
         // 3. COUNTERWEIGHT
@@ -807,6 +890,7 @@
         });
 
         const globalHookPos = new THREE.Vector3();
+        const spreaderTip = new THREE.Vector3();
 
         function toggleHook() {
             // A viewer asks the host to hook/unhook; the host checks the range.
@@ -938,7 +1022,7 @@
                 const appliedYawTorque = 2160; 
                 const I_yaw = (M_DEV / g) * (43 * 43 / 12) 
                             + (M_CW / g) * (dcw * dcw) 
-                            + (M_HOOK / g) * (RIG_HOOK_X * RIG_HOOK_X) 
+                            + ((M_HOOK + M_SPREADER) / g) * (RIG_HOOK_X * RIG_HOOK_X)
                             + (isHooked ? (M_LOAD / g) * (RIG_HOOK_X * RIG_HOOK_X) : 0);
                 
                 let yawAlpha = 0;
@@ -960,7 +1044,7 @@
 
                 if (isHooked) {
                     loadPos.copy(globalHookPos);
-                    loadPos.y -= 2.5; 
+                    loadPos.y -= LOAD_HANG;
                     loadVelocity.set(0, 0, 0);
                 } else {
                     loadVelocity.y -= g * dt;
@@ -1006,13 +1090,13 @@
                 }
 
                 if (isHooked) {
-                    const intendedY = globalHookPos.y - 2.5;
+                    const intendedY = globalHookPos.y - LOAD_HANG;
                     if (intendedY >= loadPos.y - 0.05) { 
                         isTaut = true;
-                        const loadDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y - 2.5) * Math.sin(theta); 
+                        const loadDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y - LOAD_HANG) * Math.sin(theta);
                         tau_load = -loadDistX * M_LOAD * g;
                         
-                        const r2_load = (RIG_HOOK_X)**2 + (RIG_HOOK_Y - 2.5)**2;
+                        const r2_load = (RIG_HOOK_X)**2 + (RIG_HOOK_Y - LOAD_HANG)**2;
                         I_load = M_LOAD * r2_load;
                     } else {
                         isTaut = false;
@@ -1026,13 +1110,15 @@
                 const hookDistX = RIG_HOOK_X * Math.cos(theta) - (RIG_HOOK_Y) * Math.sin(theta);
                 const cwDistX = dcw * Math.cos(theta) - (-16.5) * Math.sin(theta);
                 // FIXED: Changed CG from -2 (front-heavy) to +1.75 (back-heavy)
-                const devDistX = 1.75 * Math.cos(theta) - (-8) * Math.sin(theta); 
+                const devDistX = DEV_CG_X * Math.cos(theta) - (-8) * Math.sin(theta);
+                const spreaderDistX = RIG_HOOK_X * Math.cos(theta) - SPREADER_CG_Y * Math.sin(theta);
 
                 const tau_hook = -hookDistX * M_HOOK * g;
+                const tau_spreader = -spreaderDistX * M_SPREADER * g;
                 const tau_cw   = -cwDistX * M_CW * g;
                 const tau_dev  = -devDistX * M_DEV * g;
 
-                const tau_gravity = tau_hook + tau_load + tau_cw + tau_dev;
+                const tau_gravity = tau_hook + tau_spreader + tau_load + tau_cw + tau_dev;
                 const tau_damping = -omega * 10000000; 
                 tau_total = tau_gravity + tau_damping;
 
@@ -1041,9 +1127,10 @@
                 const r2_dev = (-2)**2 + (-8)**2;    
 
                 const I_hook = M_HOOK * r2_hook;
+                const I_spreader = M_SPREADER * ((RIG_HOOK_X)**2 + SPREADER_CG_Y**2);
                 const I_cw   = M_CW * r2_cw;
                 const I_dev  = M_DEV * r2_dev;
-                const I_total = I_hook + I_load + I_cw + I_dev;
+                const I_total = I_hook + I_spreader + I_load + I_cw + I_dev;
 
                 const alpha = tau_total / I_total;
                 omega += alpha * dt;
@@ -1077,6 +1164,12 @@
             
             deviceGroup.position.copy(pivotPos);
             deviceGroup.rotation.set(0, yaw, theta);
+
+            // The spreader hangs 8" below the rig tip, plumb (it does not pitch with the rig), turning with it
+            deviceGroup.updateMatrixWorld(true);
+            hookVisual.getWorldPosition(spreaderTip);
+            spreader.position.set(spreaderTip.x, spreaderTip.y - SPREADER_DROP, spreaderTip.z);
+            spreader.rotation.y = yaw;
 
             gantry.position.set(pivotPos.x, pivotPos.y + 200, pivotPos.z);
             gantryCable.position.set(pivotPos.x, pivotPos.y + 100, pivotPos.z);
