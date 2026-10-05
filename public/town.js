@@ -602,7 +602,7 @@
   updatePeds(0);
 
   // ========================================================================
-  // TWO CAMPS near the corners: a person sitting on the sidewalk with a dog and a few belongings
+  // A CAMP near the corner: a person sitting on the sidewalk with a dog and a few belongings
   // ========================================================================
   const tails = []; // wagging tails: they are kept as separate meshes
   function dog(parent, x, z, yaw, coat, patch, sitting, phase) {
@@ -666,9 +666,6 @@
   // Camp 1: on street B's east sidewalk, just past the corner, facing the street; a sitting brown dog beside
   seatedPerson(camps, CX + HALF + SW / 2 + 0, CZ + HALF + SW + 4, Math.PI / 2, { coat: 0x4b5d3a, pants: 0x2f3a4a, skin: 0xc68642, hat: 0x7a1f1f, blanket: 0x6b7a8f, bag: 0x3d5a3d, roll: 0x4a5a7a });
   dog(camps, CX + HALF + SW / 2 + 0, CZ + HALF + SW + 9.5, Math.PI / 2, 0xb07a3c, 0xf0e6d2, true, 0);
-  // Camp 2: on street B's west sidewalk toward the site, knees up, with a black and white dog lying next to him
-  seatedPerson(camps, CX - HALF - SW / 2, CZ - HALF - SW - 12, -Math.PI / 2, { coat: 0x5a4a3a, pants: 0x3a3a3a, skin: 0xe0ac69, hat: 0x333333, blanket: 0x8a5a44, bag: 0x2f3f5a, roll: 0x6a4a2a, kneesUp: true });
-  dog(camps, CX - HALF - SW / 2, CZ - HALF - SW - 17.5, -Math.PI / 2, 0x1f1f1f, 0xf4f4f4, false, 2.1);
 
   mergeStatic(town, trafficGroup); // streets, signals and the whole job site: one mesh per material
 
