@@ -20,6 +20,7 @@
         #canvas-container { width: 100vw; height: 100vh; display: block; }
         .panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); }
         .text-glow { text-shadow: 0 0 10px rgba(255, 255, 255, 0.5); }
+        #view-panel button { padding: 0.35rem 0.55rem; font-size: 0.75rem; } /* five view buttons fit between the two panels */
     </style>
 </head>
 <body class="text-white relative select-none focus:outline-none" tabindex="0">
@@ -82,7 +83,20 @@
     <div id="view-panel" class="absolute top-4 left-1/2 -translate-x-1/2 flex gap-2 z-40 select-none">
         <button id="btn-view-bird" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Bird (0)</button>
         <button id="btn-view-floor" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Floor (1)</button>
-        <button id="btn-view-platform" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Platform (2)</button>
+        <button id="btn-view-platform0" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Lvl 29 (2)</button>
+        <button id="btn-view-platform1" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Lvl 50 (3)</button>
+        <button id="btn-view-platform2" class="panel px-3 py-2 rounded-lg border border-slate-500 text-white text-sm font-bold touch-manipulation">Lvl 74 (4)</button>
+    </div>
+
+    <!-- Fast forward: the operator can skip the long climb once the hook is a little above the ground -->
+    <div id="ff-panel" style="display:none" class="absolute bottom-6 left-1/2 -translate-x-1/2 panel p-2 rounded-xl border border-amber-500 z-40 select-none text-center">
+        <div id="ff-title" class="text-xs text-amber-300 font-bold mb-1">FAST FORWARD</div>
+        <div class="flex gap-1">
+            <button id="btn-ff-ground" class="panel px-2 py-1 rounded-lg border border-slate-500 text-white text-xs font-bold touch-manipulation">Ground</button>
+            <button id="btn-ff-0" class="panel px-2 py-1 rounded-lg border border-amber-500 text-amber-300 text-xs font-bold touch-manipulation">Lvl 29</button>
+            <button id="btn-ff-1" class="panel px-2 py-1 rounded-lg border border-amber-500 text-amber-300 text-xs font-bold touch-manipulation">Lvl 50</button>
+            <button id="btn-ff-2" class="panel px-2 py-1 rounded-lg border border-amber-500 text-amber-300 text-xs font-bold touch-manipulation">Lvl 74</button>
+        </div>
     </div>
 
     <!-- Success Message -->
@@ -181,8 +195,7 @@
         // Turn of the floor n about the core, in radians about +y (negative = clockwise seen from above)
         const twistRad = (n) => (n < TWIST_FIRST || Math.floor((n - TWIST_FIRST) / TWIST_EVERY) % 2 !== 0) ? 0 : -TWIST_DEG * Math.PI / 180;
         const CORE_REL_FT = [50, 45];                    // elevator core, from the model's min corner (X, Y): the turn is about this point
-        const PLATFORM_LEVEL = 29;
-        const PLATFORM_TOP = levelTop(PLATFORM_LEVEL) + BUILDING_LIFT; // walking surface of the platform floor (ft)
+        const PLATFORM_LEVELS = [29, 50, 74];            // loading platforms: floors with a pad in the bay (74 = second-last of 75)
         const PLATFORM_SPOT_Z = 7.8;                     // where the platform rigger stands: the corner of the bay, so the load can pass
         // The building model -> scene: CAD (x, y, z; Z up) -> x = -y (interior goes away from the crane), y = z, z = -x
         const BUILDING_ORTHO = new THREE.Matrix4().set(
@@ -205,14 +218,26 @@
             const dx = x - CORE.x, dz = z - CORE.z, c = Math.cos(phi), s = Math.sin(phi);
             return [CORE.x + dx * c + dz * s, CORE.z - dx * s + dz * c];
         }
-        // The landing pad: a 17 x 17 ft square in the bay of the platform floor, turned with that floor
-        const PAD_PHI = twistRad(PLATFORM_LEVEL);
-        const PAD = (() => { const c = turnAboutCore(BUILDING_FACE_X - 9.5, 0, PAD_PHI); return { cx: c[0], cz: c[1], hx: 8.5, hz: 8.5, yaw: PAD_PHI }; })();
-        // Is the point (x, z) over the pad? (the pad may be turned, so test in its own frame)
-        function onPadXZ(x, z, margin) {
-            const dx = x - PAD.cx, dz = z - PAD.cz, c = Math.cos(PAD.yaw), s = Math.sin(PAD.yaw);
-            return Math.abs(dx * c - dz * s) < PAD.hx - (margin || 0) && Math.abs(dx * s + dz * c) < PAD.hz - (margin || 0);
+        // One loading platform per level: a landing pad (17 x 17 ft in the bay, turned with its floor), the
+        // viewpoint of the rigger standing at the corner of the bay, and where that rigger's person is drawn
+        const PLATFORMS = PLATFORM_LEVELS.map((level) => {
+            const top = levelTop(level) + BUILDING_LIFT, phi = twistRad(level);
+            const c = turnAboutCore(BUILDING_FACE_X - 9.5, 0, phi);
+            const e = turnAboutCore(BUILDING_FACE_X + 0.2, PLATFORM_SPOT_Z, phi);
+            const f = turnAboutCore(BUILDING_FACE_X - 0.8, PLATFORM_SPOT_Z, phi);
+            return { level, top, pad: { cx: c[0], cz: c[1], hx: 8.5, hz: 8.5, yaw: phi },
+                     eye: new THREE.Vector3(e[0], top + 5.5, e[1]), feet: new THREE.Vector3(f[0], top, f[1]) };
+        });
+        // Is the point (x, z) over this platform's pad? (a pad may be turned, so test in its own frame)
+        function overPad(P, x, z) {
+            const pd = P.pad, dx = x - pd.cx, dz = z - pd.cz, c = Math.cos(pd.yaw), s = Math.sin(pd.yaw);
+            return Math.abs(dx * c - dz * s) < pd.hx && Math.abs(dx * s + dz * c) < pd.hz;
         }
+        // The first platform (level 29), under the names the rest of the code and the tests use
+        const PLATFORM_LEVEL = PLATFORMS[0].level, PLATFORM_TOP = PLATFORMS[0].top, PAD = PLATFORMS[0].pad;
+        const onPadXZ = (x, z) => overPad(PLATFORMS[0], x, z);
+        // Height the rig's pivot must be at to bring a strapped load down onto a platform (the hook hangs 18.2 ft below the pivot)
+        const pivotYForPlatform = (P) => P.top + LOAD_HALF_H + LOAD_HANG - RIG_HOOK_Y + 0.5;
         const FOG_DENSITY = 0.0012; // light haze, so the tower stays visible at several hundred feet
         const LOAD_HANG = LOAD_HALF_H + SPREADER_DROP + SPREADER_DEPTH; // load centre below the rig tip (load top touches the beam)
         const SPREADER_CG_Y = RIG_HOOK_Y - SPREADER_DROP - SPREADER_DEPTH / 2; // spreader centre of gravity, in rig coordinates
@@ -266,6 +291,10 @@
         const HOIST_MAX_SPEED = 6.0;
         const HOIST_ACCEL = 1.0;
         const HOIST_DECEL = 2.0;
+        // Fast forward (operator): once the hook is FF_MIN_HOOK_FT above the ground, the rig can climb or descend by
+        // itself to a loading platform (or back to the ground): up to FF_SPEED ft/s, gentle at both ends.
+        const FF_MIN_HOOK_FT = 25, FF_SPEED = 60, FF_ACCEL = 30, FF_DECEL = 20;
+        let ffTargetY = null;                 // pivot height the rig is heading for, or null
         // Rotation comes from a fan at the back of the rig: ~92 kg of thrust (90-100 kg), 18 ft behind the pivot.
         const FAN_THRUST_LBF = 92 * 2.20462; // kgf -> lbf, about 203 lbf
         const FAN_ARM_FT = 18;               // torque is about 3,650 lb-ft
@@ -368,10 +397,11 @@
 
         // --- CAMERA VIEWS ---
         // orbit: free camera (offline default). bird: operator overview, still orbitable.
-        // floor: rigger standing on the ground near the load. platform: rigger on the edge of the
-        // building's 2nd-last floor, at the slab edge in the bay. Floor/platform look at the load.
+        // floor: rigger standing on the ground near the load. platform0/1/2: rigger on the slab edge of the
+        // loading platform at level 29 / 50 / 74, at the corner of the bay. Floor/platform views look at the load.
         const FLOOR_EYE_Y = 5.5;
-        const PLATFORM_EYE = (() => { const p = turnAboutCore(BUILDING_FACE_X + 0.2, PLATFORM_SPOT_Z, PAD_PHI); return new THREE.Vector3(p[0], PLATFORM_TOP + 5.5, p[1]); })(); // slab edge of the platform floor, at the corner of the bay
+        const VIEW_MODES = ['bird', 'floor', 'platform0', 'platform1', 'platform2'];
+        const platformOfMode = (mode) => (mode.startsWith('platform') ? PLATFORMS[+mode.slice(8)] : null);
         let viewMode = 'orbit';
 
         // Floor/platform views follow the load until you drag to look around (mouse or touch).
@@ -386,7 +416,7 @@
             lookPitch = Math.asin(d.y);
             lookFree = true;
         }
-        const isFixedView = () => viewMode === 'floor' || viewMode === 'platform';
+        const isFixedView = () => viewMode === 'floor' || viewMode.startsWith('platform');
 
         renderer.domElement.addEventListener('pointerdown', (e) => {
             if (isFixedView()) lookDrag = { x: e.clientX, y: e.clientY, moved: false };
@@ -421,8 +451,8 @@
             } else if (mode === 'floor') {
                 camera.position.set(loadPos.x + 14, FLOOR_EYE_Y, loadPos.z + 16);
                 controls.enabled = false;
-            } else if (mode === 'platform') {
-                camera.position.copy(PLATFORM_EYE);
+            } else if (platformOfMode(mode)) {
+                camera.position.copy(platformOfMode(mode).eye);
                 controls.enabled = false;
             } else {
                 camera.position.set(20, 30, 70);
@@ -430,18 +460,19 @@
                 controls.enabled = true;
                 controls.update();
             }
-            for (const m of ['bird', 'floor', 'platform']) {
+            for (const m of VIEW_MODES) {
                 document.getElementById('btn-view-' + m).classList.toggle('border-teal-400', m === mode);
             }
         }
 
         function applyViewPanel(modes) {
-            for (const m of ['bird', 'floor', 'platform']) {
+            for (const m of VIEW_MODES) {
                 document.getElementById('btn-view-' + m).style.display = modes.includes(m) ? '' : 'none';
             }
         }
 
-        for (const m of ['bird', 'floor', 'platform']) {
+        PLATFORMS.forEach((P, i) => { document.getElementById('btn-view-platform' + i).textContent = `Lvl ${P.level} (${i + 2})`; });
+        for (const m of VIEW_MODES) {
             document.getElementById('btn-view-' + m).addEventListener('click', (e) => { e.preventDefault(); setView(m); });
         }
         window.addEventListener('keydown', (e) => {
@@ -450,13 +481,12 @@
             if (e.key.toLowerCase() === 'o') { loadFlip.rotation.x = loadFlip.rotation.x ? 0 : Math.PI; refreshLoadPoints(); return; }
             if (e.key.toLowerCase() === 'r' && isHost && gameOver) { resetSim(); return; }
             if (e.key.toLowerCase() === 'l' && isFixedView()) { lookFree = false; return; }
-            const mode = { '0': 'bird', '1': 'floor', '2': 'platform' }[e.key];
+            const mode = { '0': 'bird', '1': 'floor', '2': 'platform0', '3': 'platform1', '4': 'platform2' }[e.key];
             if (mode && document.getElementById('btn-view-' + mode).style.display !== 'none') setView(mode);
         });
 
         // --- RIGGERS: low-poly people (5'11", hard hat, hi-vis vest) at the viewers' positions ---
         const PERSON_HEIGHT = 5.917; // 5 ft 11 in, scene units are feet
-        const PLATFORM_FEET = (() => { const p = turnAboutCore(BUILDING_FACE_X - 0.8, PLATFORM_SPOT_Z, PAD_PHI); return new THREE.Vector3(p[0], PLATFORM_TOP, p[1]); })(); // standing on the slab, near its edge
 
         function makePerson() {
             const mat = (color) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.8 });
@@ -513,11 +543,11 @@
             if (networkRole !== 'Viewer' || !socket || !socket.connected || !isFixedView()) return;
             const now = performance.now();
             if (now - lastViewAt < 100) return;
-            const feet = viewMode === 'floor' ? [camera.position.x, 0, camera.position.z]
-                                              : [PLATFORM_FEET.x, PLATFORM_FEET.y, PLATFORM_FEET.z];
-            const msg = [viewMode === 'floor' ? 0 : 1, feet[0], feet[1], feet[2], camera.rotation.y];
+            const P = platformOfMode(viewMode); // the platform this viewer stands on, if any
+            const feet = P ? [P.feet.x, P.feet.y, P.feet.z] : [camera.position.x, 0, camera.position.z];
+            const msg = [P ? 1 : 0, feet[0], feet[1], feet[2], camera.rotation.y];
             if (lastView && lastView[0] === msg[0]
-                && Math.hypot(lastView[1] - msg[1], lastView[3] - msg[3]) < 0.01
+                && Math.hypot(lastView[1] - msg[1], lastView[2] - msg[2], lastView[3] - msg[3]) < 0.01
                 && Math.abs(lastView[4] - msg[4]) < 0.03) return;
             lastView = msg;
             lastViewAt = now;
@@ -646,17 +676,18 @@
             return new THREE.CanvasTexture(canvas);
         }
 
-        // Striped landing pad painted on the platform floor, between the two wall fins (turned with that floor)
+        // Striped landing pad painted on each platform floor, between the two wall fins (turned with that floor)
         const padTex = createStripeTexture();
         padTex.wrapS = padTex.wrapT = THREE.RepeatWrapping;
         padTex.repeat.set(2 * PAD.hx / 17, 2 * PAD.hz / 17);
-        const landingPad = new THREE.Mesh(
-            new THREE.PlaneGeometry(2 * PAD.hx, 2 * PAD.hz),
-            new THREE.MeshBasicMaterial({ map: padTex, transparent: true, opacity: 0.85 }));
-        landingPad.rotation.order = 'YXZ';
-        landingPad.rotation.set(-Math.PI / 2, PAD.yaw, 0); // lie flat, then turn with the floor
-        landingPad.position.set(PAD.cx, PLATFORM_TOP + 0.03, PAD.cz);
-        scene.add(landingPad);
+        const padMaterial = new THREE.MeshBasicMaterial({ map: padTex, transparent: true, opacity: 0.85 });
+        for (const P of PLATFORMS) {
+            const pad = new THREE.Mesh(new THREE.PlaneGeometry(2 * P.pad.hx, 2 * P.pad.hz), padMaterial);
+            pad.rotation.order = 'YXZ';
+            pad.rotation.set(-Math.PI / 2, P.pad.yaw, 0); // lie flat, then turn with the floor
+            pad.position.set(P.pad.cx, P.top + 0.03, P.pad.cz);
+            scene.add(pad);
+        }
 
         const deviceGroup = new THREE.Group();
         deviceGroup.rotation.order = "YXZ"; 
@@ -1036,7 +1067,7 @@
                 hostGone = false;
                 document.getElementById('row-remote').style.display = isHost ? '' : 'none';
                 applyRoleUI();
-                applyViewPanel(isHost ? ['bird'] : ['floor', 'platform']);
+                applyViewPanel(isHost ? ['bird'] : ['floor', 'platform0', 'platform1', 'platform2']);
                 setView(isHost ? 'bird' : 'floor');
 
                 // Runs on every (re)connect: the server forgets rooms when a socket drops.
@@ -1059,7 +1090,7 @@
                             canMove = canRig = true;
                             applyViews([]);
                             applyRoleUI();
-                            applyViewPanel(['bird', 'floor', 'platform']);
+                            applyViewPanel(VIEW_MODES);
                             setView('orbit');
                             networkRole = "Offline";
                             panel.style.display = '';
@@ -1374,7 +1405,7 @@
         function resetSim() {
             pivotPos.set(0, 30, 0); pivotVel.set(0, 0, 0);
             theta = 0; omega = 0; yaw = 0; yawVelocity = 0;
-            spreaderYaw = 0; spreaderYawVel = 0; strapOffset = 0; loadLocked = false; lockOffset = 0;
+            spreaderYaw = 0; spreaderYawVel = 0; strapOffset = 0; loadLocked = false; lockOffset = 0; ffTargetY = null;
             dcw = DCW_BALANCED; isHooked = false; isTaut = false;
             const a = Math.random() * Math.PI * 2, r = Math.random() * 20;
             loadPos.set(Math.cos(a) * r, LOAD_HALF_H, Math.sin(a) * r);
@@ -1384,9 +1415,33 @@
             updateGameOverUI(); // hide the message and forget what was hit
         }
 
+        // ---------- fast forward buttons (operator only, once the hook is a little above the ground) ----------
+        const ffPanel = document.getElementById('ff-panel'), ffTitle = document.getElementById('ff-title');
+        function startFastForward(targetPivotY) {
+            if (!isHost || !canMove || gameOver || globalHookPos.y < FF_MIN_HOOK_FT) return;
+            ffTargetY = targetPivotY;
+        }
+        document.getElementById('btn-ff-ground').addEventListener('click', (e) => { e.preventDefault(); startFastForward(30); });
+        PLATFORMS.forEach((P, i) => {
+            const b = document.getElementById('btn-ff-' + i);
+            b.textContent = `Lvl ${P.level}`;
+            b.title = `${Math.round(P.top)} ft`;
+            b.addEventListener('click', (e) => { e.preventDefault(); startFastForward(pivotYForPlatform(P)); });
+        });
+        let ffShown = null;
+        function updateFastForwardUI() {
+            const show = isHost && canMove && !gameOver && globalHookPos.y >= FF_MIN_HOOK_FT;
+            const text = ffTargetY !== null ? 'FAST FORWARDING... (any hoist key stops it)' : 'FAST FORWARD';
+            if (ffShown === show + text) return;
+            ffShown = show + text;
+            ffPanel.style.display = show ? '' : 'none';
+            ffTitle.textContent = text;
+        }
+
         const gameOverBox = document.getElementById('gameover-msg');
         let shownGameOver = 0;
         function updateGameOverUI() {
+            updateFastForwardUI();
             if (gameOver === shownGameOver) return;
             shownGameOver = gameOver;
             gameOverBox.style.display = gameOver ? '' : 'none';
@@ -1421,7 +1476,8 @@
         const uiAlign = document.getElementById('ui-align');
         const uiAlignLabel = document.getElementById('ui-align-label');
         const uiHook = document.getElementById('ui-hook');
-        document.getElementById('ui-platform').textContent = `lvl ${PLATFORM_LEVEL} · ${Math.round(PLATFORM_TOP)} ft`;
+        document.getElementById('ui-platform').textContent = PLATFORMS.map((P) => P.level).join(' · ');
+        document.getElementById('ui-platform').title = PLATFORMS.map((P) => `lvl ${P.level} = ${Math.round(P.top)} ft`).join(', ');
         // The floor a height is on or above (1 .. TOWER_LEVELS)
         function levelAt(y) {
             const h = y - BUILDING_LIFT;
@@ -1517,7 +1573,15 @@
                 }
 
                 // 2. Vertical Physics: the rig coasts to a stop when you let go of the hoist
-                if (isHoisting) {
+                if (ffTargetY !== null && isHoisting) ffTargetY = null;       // any hoist key takes control back
+                if (ffTargetY !== null) {
+                    // Fast forward: speed up, cruise, and slow down so the rig arrives gently at the target height
+                    const dist = ffTargetY - pivotPos.y;
+                    const want = Math.sign(dist) * Math.min(FF_SPEED, Math.sqrt(2 * FF_DECEL * Math.abs(dist)));
+                    const lim = (Math.abs(want) > Math.abs(pivotVel.y) ? FF_ACCEL : FF_DECEL * 1.5) * dt;
+                    pivotVel.y += Math.max(-lim, Math.min(lim, want - pivotVel.y));
+                    if (Math.abs(dist) < 0.15 && Math.abs(pivotVel.y) < 1) { pivotPos.y = ffTargetY; pivotVel.y = 0; ffTargetY = null; }
+                } else if (isHoisting) {
                     pivotVel.y += ay * dt;
                     if (Math.abs(pivotVel.y) > HOIST_MAX_SPEED) {
                         pivotVel.y = Math.sign(pivotVel.y) * HOIST_MAX_SPEED;
@@ -1596,12 +1660,14 @@
 
                 // Landing pad on the platform floor: the load comes to rest when its centre is over the pad
                 // (the pad is turned with its floor, so the test is done in the pad's own frame)
-                if (loadPos.y > PLATFORM_TOP - 2 && loadPos.y < PLATFORM_TOP + LOAD_HALF_H && onPadXZ(loadPos.x, loadPos.z)) {
-                    loadPos.y = PLATFORM_TOP + LOAD_HALF_H;
-                    if (!isHooked) {
-                        loadVelocity.y = 0;
-                        loadVelocity.x *= 0.8;
-                        loadVelocity.z *= 0.8;
+                for (const P of PLATFORMS) {
+                    if (loadPos.y > P.top - 2 && loadPos.y < P.top + LOAD_HALF_H && overPad(P, loadPos.x, loadPos.z)) {
+                        loadPos.y = P.top + LOAD_HALF_H;
+                        if (!isHooked) {
+                            loadVelocity.y = 0;
+                            loadVelocity.x *= 0.8;
+                            loadVelocity.z *= 0.8;
+                        }
                     }
                 }
 
@@ -1700,7 +1766,7 @@
 
             let winConditionMet = false;
             if (!isHooked) {
-                const onPad = Math.abs(loadPos.y - (PLATFORM_TOP + LOAD_HALF_H)) < 0.01 && onPadXZ(loadPos.x, loadPos.z);
+                const onPad = PLATFORMS.some((P) => Math.abs(loadPos.y - (P.top + LOAD_HALF_H)) < 0.01 && overPad(P, loadPos.x, loadPos.z));
                 if (onPad) winConditionMet = true;
             }
 
