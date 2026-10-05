@@ -38,10 +38,11 @@
     return m;
   }
   // Flat paint on the ground (sizeX along x, sizeZ along z), drawn over the asphalt without flicker
+  const flatMats = {};
   function flat(parent, sizeX, sizeZ, color, x, z, y, order) {
-    const m = new THREE.Mesh(
-      new THREE.PlaneGeometry(sizeX, sizeZ),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -order, polygonOffsetUnits: -order }));
+    const key = color + ':' + order;
+    const material = flatMats[key] || (flatMats[key] = new THREE.MeshStandardMaterial({ color, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -order, polygonOffsetUnits: -order }));
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(sizeX, sizeZ), material);
     m.rotation.x = -Math.PI / 2;
     m.position.set(x, y, z);
     m.receiveShadow = true;
@@ -52,6 +53,44 @@
   function solid(name, cx, cz, sizeX, sizeZ, height, y0) {
     const y = y0 || 0;
     OBSTACLES.push({ name, minX: cx - sizeX / 2, maxX: cx + sizeX / 2, minY: y, maxY: y + height, minZ: cz - sizeZ / 2, maxZ: cz + sizeZ / 2 });
+  }
+  // Merge the meshes under `root` that share a material into one mesh each, so the scene needs far fewer
+  // draw calls (this matters on phones). Textured meshes and anything under `skip` are left alone.
+  function mergeStatic(root, skip) {
+    root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+    const list = [];
+    (function walk(o) {
+      if (o === skip) return;
+      if (o.isMesh && !o.isInstancedMesh && !o.material.map && o.geometry.attributes.position) list.push(o);
+      o.children.forEach(walk);
+    })(root);
+    const buckets = new Map(), rel = new THREE.Matrix4(), nm = new THREE.Matrix3(), v = new THREE.Vector3();
+    for (const m of list) {
+      const key = m.material.uuid + '|' + (m.castShadow ? 1 : 0) + (m.receiveShadow ? 1 : 0);
+      let b = buckets.get(key);
+      if (!b) { b = { material: m.material, cast: m.castShadow, receive: m.receiveShadow, pos: [], nor: [] }; buckets.set(key, b); }
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+      rel.multiplyMatrices(inv, m.matrixWorld);
+      nm.getNormalMatrix(rel);
+      const P = g.attributes.position, N = g.attributes.normal;
+      for (let i = 0; i < P.count; i++) {
+        v.fromBufferAttribute(P, i).applyMatrix4(rel);
+        b.pos.push(v.x, v.y, v.z);
+        if (N) { v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize(); b.nor.push(v.x, v.y, v.z); }
+      }
+      m.parent.remove(m);
+      if (g !== m.geometry) g.dispose();
+      m.geometry.dispose();
+    }
+    for (const b of buckets.values()) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+      if (b.nor.length === b.pos.length) g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3)); else g.computeVertexNormals();
+      const mesh = new THREE.Mesh(g, b.material);
+      mesh.castShadow = b.cast; mesh.receiveShadow = b.receive;
+      root.add(mesh);
+    }
   }
   function seeded(seed) { // small repeatable random numbers
     let s = seed >>> 0;
@@ -180,6 +219,7 @@
       len = 15; box(g, len, 2.3, 6.2, color, 0, 1.2, 0, true); box(g, 8, 2.2, 5.4, 0x1b2733, -0.8, 3.5, 0, true); box(g, 7.4, 0.3, 5.6, color, -0.8, 5.7, 0, true); wheels(g, len, 6.2, 1.1);
     }
     g.userData.len = len;
+    mergeStatic(g); // a handful of meshes per vehicle instead of dozens
     return g;
   }
 
@@ -440,6 +480,8 @@
   for (const z of [-14, 14, -22, 22]) cone(-38, z);
   // Workers (not solid): they keep the site looking alive
   worker(30, -50, 0.6); worker(-18, -55, -2.2); worker(52, 34, 3.0); worker(-60, 50, 1.4); worker(-85, -44, 2.5);
+
+  mergeStatic(town, trafficGroup); // streets, signals and the whole job site: one mesh per material
 
   window.updateTown = updateTown;
   window.TOWN = { lanes, lights: () => shown, centre: [CX, CZ], half: HALF, setTraffic(on) { trafficOn = on; trafficGroup.visible = on; }, group: town };

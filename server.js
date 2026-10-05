@@ -55,7 +55,7 @@ io.on('connection', (socket) => {
     if (!room || !Array.isArray(v) || v.length !== 5 || !v.every(Number.isFinite)) return;
     const [mode, x, y, z, yaw] = v;
     if (mode !== 0 && mode !== 1) return;
-    if (Math.abs(x) > 500 || Math.abs(z) > 500 || y < -1 || y > 300 || Math.abs(yaw) > 1000) return;
+    if (Math.abs(x) > 500 || Math.abs(z) > 500 || y < -1 || y > 2000 || Math.abs(yaw) > 1000) return;
     room.views.set(socket.id, v);
     sendViews(name, room);
   });
