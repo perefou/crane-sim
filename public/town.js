@@ -4,7 +4,8 @@
 // its scene, ground, makePerson() and OBSTACLES. All sizes are in feet.
 //
 // - The traffic is only scenery: every screen runs its own copy, nothing is sent over the network.
-//   Press T to turn the traffic off (a lighter scene for phones).
+//   Pedestrians walk the sidewalks and cross at the crosswalks when the signal lets them.
+//   Press T to turn the traffic and pedestrians off (a lighter scene for phones).
 // - The big pieces of equipment are solid: if the rig, the spreader or the load touches one, it is
 //   game over, like touching the building (see OBSTACLES in index.html).
 // ============================================================================
@@ -62,7 +63,7 @@
     const list = [];
     (function walk(o) {
       if (o === skip) return;
-      if (o.isMesh && !o.isInstancedMesh && !o.material.map && o.geometry.attributes.position) list.push(o);
+      if (o.isMesh && !o.isInstancedMesh && !o.userData.noMerge && !o.material.map && o.geometry.attributes.position) list.push(o);
       o.children.forEach(walk);
     })(root);
     const buckets = new Map(), rel = new THREE.Matrix4(), nm = new THREE.Matrix3(), v = new THREE.Vector3();
@@ -152,10 +153,12 @@
   flat(town, HALF - 1, 1.2, WHITE, CX - HALF / 2, CZ - HALF - 10.5, 0.1, 3);  // southbound... (travelling +z, right-hand lane is -x)
   flat(town, HALF - 1, 1.2, WHITE, CX + HALF / 2, CZ + HALF + 10.5, 0.1, 3);
 
-  // Sidewalks (raised 6 in). Street A's strips run the full length; street B's stop short of them
+  // Sidewalks (raised 6 in). Street A's strips stop at street B's kerbs (so the roadway stays level), and
+  // street B's strips stop short of street A's strips, which also fill the corner squares
   for (const side of [-1, 1]) {
-    box(town, 2 * EXT, 0.5, SW, WALK, 0, 0, CZ + side * (HALF + SW / 2));
-    const zFrom = side < 0 ? -EXT : CZ + HALF + SW, zTo = side < 0 ? CZ - HALF - SW : EXT;
+    for (const [a, b] of [[-EXT, CX - HALF], [CX + HALF, EXT]]) {
+      box(town, b - a, 0.5, SW, WALK, (a + b) / 2, 0, CZ + side * (HALF + SW / 2));
+    }
     for (const [a, b] of [[-EXT, CZ - HALF - SW], [CZ + HALF + SW, EXT]]) {
       box(town, SW, 0.5, b - a, WALK, CX + side * (HALF + SW / 2), 0, (a + b) / 2);
     }
@@ -304,18 +307,20 @@
     clockT += dt;
     const state = lightsAt(clockT);
     if (state.A !== shown.A || state.B !== shown.B) { shown = state; setLenses(state); }
+    wagTails(clockT);
     if (!trafficOn) return;
     for (let t = 0; t < dt; t += 0.05) {
       const h = Math.min(0.05, dt - t);
       for (const lane of lanes) stepLane(lane, h, state[lane.street]);
     }
     placeCars();
+    updatePeds(dt);
   }
   // Start with the cars already moving and the lights set
   { const s = lightsAt(clockT); shown = s; setLenses(s); for (let i = 0; i < 400; i++) { clockT += 0.05; const st = lightsAt(clockT); for (const lane of lanes) stepLane(lane, 0.05, st[lane.street]); } shown = lightsAt(clockT); setLenses(shown); placeCars(); }
   window.addEventListener('keydown', (e) => {
     if (e.target && e.target.tagName === 'INPUT') return;
-    if (e.key.toLowerCase() === 't') { trafficOn = !trafficOn; trafficGroup.visible = trafficOn; }
+    if (e.key.toLowerCase() === 't') { trafficOn = !trafficOn; trafficGroup.visible = trafficOn; pedGroup.visible = trafficOn; }
   });
 
   // ========================================================================
@@ -481,8 +486,192 @@
   // Workers (not solid): they keep the site looking alive
   worker(30, -50, 0.6); worker(-18, -55, -2.2); worker(52, 34, 3.0); worker(-60, 50, 1.4); worker(-85, -44, 2.5);
 
+  // ========================================================================
+  // PEDESTRIANS: walk the sidewalks, wait at the corners for the signal, cross at the crosswalks
+  // ========================================================================
+  // Every body part is one InstancedMesh shared by all the pedestrians, so 16 people cost 7 draw calls.
+  const pedGroup = new THREE.Group();
+  town.add(pedGroup);
+  const NPED = 16;
+  const pedPart = (w, h, d, x, y, z) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); return g; };
+  const pedMat = new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true });
+  const PED_PARTS = { // feet at y = 0, facing -z; limbs pivot at the hip / shoulder
+    torso: pedPart(1.3, 1.9, 0.7, 0, 3.95, 0), head: pedPart(0.62, 0.62, 0.62, 0, 5.3, 0), hair: pedPart(0.68, 0.28, 0.68, 0, 5.62, 0),
+    legL: pedPart(0.5, 3.0, 0.5, 0, -1.5, 0), legR: pedPart(0.5, 3.0, 0.5, 0, -1.5, 0),
+    armL: pedPart(0.36, 1.8, 0.4, 0, -0.9, 0), armR: pedPart(0.36, 1.8, 0.4, 0, -0.9, 0),
+  };
+  const JOINTS = { legL: [-0.28, 3.0, 0], legR: [0.28, 3.0, 0], armL: [-0.85, 4.8, 0], armR: [0.85, 4.8, 0] };
+  const pedMesh = {};
+  for (const k of Object.keys(PED_PARTS)) {
+    const m = new THREE.InstancedMesh(PED_PARTS[k], pedMat, NPED);
+    m.frustumCulled = false;
+    pedGroup.add(m);
+    pedMesh[k] = m;
+  }
+  const SHIRTS = [0xc0392b, 0x2e86c1, 0x27ae60, 0xf1c40f, 0x7d3c98, 0xecf0f1, 0x34495e, 0xe67e22, 0xd98880];
+  const PANTS = [0x2c3e50, 0x34495e, 0x5d4e37, 0x1b1b1b, 0x3d5a80, 0x6b705c];
+  const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0x6b4423, 0xffdbac];
+  const HAIRS = [0x2b1b0e, 0x4a3320, 0x111111, 0xb08d57, 0xd9d9d9, 0x7a3b1e];
+  const pickOf = (arr) => arr[Math.floor(rnd() * arr.length)];
+
+  // Routes along the sidewalk centre lines; a segment that crosses a street is a crosswalk
+  const K1 = CX - HALF - 5, K2 = CX + HALF + 5; // 77 and 123: the crosswalk lines (CX = CZ)
+  const P = (x, z) => ({ x, z });
+  const ROUTES = [
+    { loop: false, pts: [P(-60, 78), P(K1, K1), P(K2, K1), P(260, 78)] },    // street A's near sidewalk, across street B
+    { loop: false, pts: [P(260, 122), P(K2, K2), P(K1, K2), P(-60, 122)] },  // street A's far sidewalk, across street B
+    { loop: false, pts: [P(78, -60), P(K1, K1), P(K1, K2), P(78, 260)] },    // street B's west sidewalk (past the site gate), across street A
+    { loop: false, pts: [P(122, 260), P(K2, K2), P(K2, K1), P(122, -60)] },  // street B's east sidewalk, across street A
+    { loop: true,  pts: [P(K1, K1), P(K2, K1), P(K2, K2), P(K1, K2)] },      // all the way round the four corners
+  ];
+  const PER_ROUTE = [4, 3, 3, 3, 3];
+  const peds = [];
+  const col = new THREE.Color();
+  {
+    let k = 0;
+    ROUTES.forEach((route, ri) => {
+      for (let j = 0; j < PER_ROUTE[ri]; j++, k++) {
+        const n = route.pts.length;
+        const p = { route, i: Math.floor(rnd() * (n - 1)), dir: rnd() < 0.5 ? 1 : -1, t: 0, speed: 3.6 + rnd() * 1.4,
+                    phase: rnd() * 6.28, amp: 1, s: 0.92 + rnd() * 0.14, yaw: 0, x: 0, z: 0 };
+        if (!route.loop && (p.i + p.dir < 0 || p.i + p.dir >= n)) p.dir = -p.dir;
+        const a = route.pts[p.i], b = route.pts[route.loop ? (p.i + 1) % n : p.i + p.dir];
+        // Start somewhere along the segment, but never in the middle of a crossing: wait at the kerb instead
+        p.t = crossingKind(a, b) ? 0 : rnd() * Math.hypot(b.x - a.x, b.z - a.z) * 0.9 + 0.01;
+        p.yaw = Math.atan2(-(b.x - a.x), -(b.z - a.z));
+        peds.push(p);
+        const shirt = pickOf(SHIRTS), pants = pickOf(PANTS), skin = pickOf(SKINS), hair = pickOf(HAIRS);
+        for (const [part, c] of [['torso', shirt], ['armL', shirt], ['armR', shirt], ['legL', pants], ['legR', pants], ['head', skin], ['hair', hair]]) {
+          pedMesh[part].setColorAt(k, col.setHex(c));
+        }
+      }
+    });
+    for (const m of Object.values(pedMesh)) m.instanceColor.needsUpdate = true;
+  }
+  const pdBase = new THREE.Matrix4(), pdLocal = new THREE.Matrix4(), pdFinal = new THREE.Matrix4();
+  const pdPos = new THREE.Vector3(), pdQuat = new THREE.Quaternion(), pdEuler = new THREE.Euler(), pdScale = new THREE.Vector3();
+
+  // The street a segment crosses ('A' runs along x, 'B' along z), or null for plain sidewalk
+  function crossingKind(a, b) {
+    if (Math.abs(a.x - b.x) < 2 && Math.min(a.z, b.z) < CZ - HALF && Math.max(a.z, b.z) > CZ + HALF) return 'A';
+    if (Math.abs(a.z - b.z) < 2 && Math.min(a.x, b.x) < CX - HALF && Math.max(a.x, b.x) > CX + HALF) return 'B';
+    return null;
+  }
+  // May a pedestrian start across? The street's traffic must be stopped now and stay stopped for as long as
+  // this pedestrian needs to get across (the crosswalk segment is 46 ft), plus a second to spare
+  function canCross(kind, seconds) {
+    for (let s = 0; s <= seconds; s += 0.5) if (lightsAt(clockT + s)[kind] !== 'red') return false;
+    return lightsAt(clockT + seconds)[kind] === 'red';
+  }
+  const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  function updatePeds(dt) {
+    for (let k = 0; k < peds.length; k++) {
+      const p = peds[k], pts = p.route.pts, n = pts.length;
+      const next = p.route.loop ? (p.i + 1) % n : p.i + p.dir;
+      const a = pts[p.i], b = pts[next];
+      const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
+      let moving = true;
+      if (p.t === 0) { const kind = crossingKind(a, b); if (kind && !canCross(kind, len / p.speed + 1)) moving = false; } // wait for the signal
+      if (moving) {
+        p.t += p.speed * dt;
+        p.phase += p.speed * dt / 2.6 * Math.PI;   // one stride every ~2.6 ft of walking
+        if (p.t >= len) {
+          p.t = 0;
+          p.i = next;
+          if (!p.route.loop && (p.i + p.dir < 0 || p.i + p.dir >= n)) p.dir = -p.dir; // turn round at the end of the route
+        }
+      }
+      const u = len > 0 ? Math.min(1, p.t / len) : 0;
+      p.x = a.x + dx * u; p.z = a.z + dz * u;
+      if (moving && len > 0) p.yaw += wrapAngle(Math.atan2(-dx, -dz) - p.yaw) * Math.min(1, dt * 8);
+      p.amp += ((moving ? 1 : 0) - p.amp) * Math.min(1, dt * 6);
+      const swing = Math.sin(p.phase) * 0.6 * p.amp;
+      const onRoad = Math.abs(p.z - CZ) < HALF || Math.abs(p.x - CX) < HALF;   // crosswalk: down at street level
+      pdPos.set(p.x, onRoad ? 0.06 : 0.5, p.z);
+      pdQuat.setFromEuler(pdEuler.set(0, p.yaw, 0));
+      pdBase.compose(pdPos, pdQuat, pdScale.set(p.s, p.s, p.s));
+      for (const part of ['torso', 'head', 'hair']) pedMesh[part].setMatrixAt(k, pdBase);
+      for (const [part, angle] of [['legL', swing], ['legR', -swing], ['armL', -swing * 0.8], ['armR', swing * 0.8]]) {
+        const j = JOINTS[part];
+        pdLocal.makeRotationX(angle).setPosition(j[0], j[1], j[2]);
+        pedMesh[part].setMatrixAt(k, pdFinal.multiplyMatrices(pdBase, pdLocal));
+      }
+    }
+    for (const m of Object.values(pedMesh)) m.instanceMatrix.needsUpdate = true;
+  }
+  updatePeds(0);
+
+  // ========================================================================
+  // TWO CAMPS near the corners: a person sitting on the sidewalk with a dog and a few belongings
+  // ========================================================================
+  const tails = []; // wagging tails: they are kept as separate meshes
+  function dog(parent, x, z, yaw, coat, patch, sitting, phase) {
+    const d = new THREE.Group(); d.position.set(x, 0.5, z); d.rotation.y = yaw; parent.add(d); // faces -z
+    const dark = 0x2a2a2a;
+    if (sitting) {
+      box(d, 0.9, 1.0, 1.3, coat, 0, 0, 0.15);                  // haunches
+      box(d, 0.75, 1.5, 0.7, coat, 0, 0.3, -0.5);               // chest, upright
+      box(d, 0.55, 0.8, 0.06, patch, 0, 0.5, -0.87, true);      // white chest
+      box(d, 0.7, 0.65, 0.8, coat, 0, 1.75, -0.7);              // head
+      box(d, 0.4, 0.35, 0.5, patch, 0, 1.6, -1.2);              // muzzle
+      box(d, 0.18, 0.14, 0.1, 0x111111, 0, 1.85, -1.48, true);  // nose
+      for (const sx of [-1, 1]) {
+        box(d, 0.2, 0.5, 0.3, dark, sx * 0.38, 2.1, -0.55);     // ears
+        box(d, 0.22, 1.0, 0.25, coat, sx * 0.25, 0, -0.95);     // front legs
+      }
+    } else { // lying down with the head on its paws
+      box(d, 0.9, 0.8, 2.0, coat, 0, 0, 0.4);                   // body
+      box(d, 0.65, 0.6, 0.75, coat, 0, 0.15, -0.95);            // head
+      box(d, 0.4, 0.3, 0.5, patch, 0, 0.1, -1.45);              // muzzle
+      box(d, 0.16, 0.12, 0.1, 0x111111, 0, 0.3, -1.72, true);   // nose
+      for (const sx of [-1, 1]) {
+        box(d, 0.2, 0.4, 0.3, dark, sx * 0.36, 0.5, -0.85);     // ears
+        box(d, 0.22, 0.25, 0.8, coat, sx * 0.28, 0, -1.2);      // front paws
+      }
+    }
+    box(d, 0.8, 0.14, 0.14, 0xc0392b, 0, sitting ? 1.35 : 0.45, sitting ? -0.62 : -0.62, true); // red collar
+    const pivot = new THREE.Group(); pivot.position.set(0, sitting ? 0.3 : 0.45, sitting ? 0.8 : 1.4); d.add(pivot);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 1.0), mat(coat));
+    tail.position.z = 0.5; tail.userData.noMerge = true; tail.castShadow = true; pivot.add(tail);
+    tails.push({ pivot, phase });
+  }
+  function wagTails(t) { for (const k of tails) k.pivot.rotation.y = Math.sin(t * 9 + k.phase) * 0.55; }
+
+  function seatedPerson(parent, x, z, yaw, o) {
+    const g = new THREE.Group(); g.position.set(x, 0.5, z); g.rotation.y = yaw; parent.add(g); // faces -z
+    box(g, 2.8, 0.08, 2.4, 0xb8956a, 0, 0, -1.0, true);                       // flattened cardboard to sit on
+    const p = new THREE.Group(); p.position.y = 0.08; g.add(p);
+    box(p, 1.3, 1.9, 0.7, o.coat, 0, 0.35, 0.1);                              // body
+    box(p, 0.62, 0.62, 0.62, o.skin, 0, 2.3, -0.05);                          // head
+    box(p, 0.72, 0.38, 0.72, o.hat, 0, 2.78, -0.05);                          // knitted hat
+    if (o.kneesUp) {
+      for (const sx of [-0.3, 0.3]) {
+        const thigh = box(p, 0.5, 0.5, 1.6, o.pants, sx, 0.55, -0.8); thigh.rotation.x = 0.6;
+        box(p, 0.5, 1.6, 0.5, o.pants, sx, 0, -1.5);                            // lower legs
+      }
+      box(p, 1.4, 0.5, 0.5, o.coat, 0, 1.4, -1.35);                             // arms resting across the knees
+    } else {
+      for (const sx of [-0.3, 0.3]) box(p, 0.5, 0.5, 3.0, o.pants, sx, 0, -1.6); // legs stretched out
+      box(p, 1.5, 0.3, 2.2, o.blanket, 0, 0.5, -1.7);                           // blanket over the legs
+      for (const sx of [-1, 1]) box(p, 0.36, 0.4, 1.3, o.coat, sx * 0.85, 0.9, -0.7); // arms resting in the lap
+    }
+    box(p, 1.1, 1.6, 0.7, o.bag, 1.9, 0, 0.4);                                  // backpack
+    const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 2.2, 10), mat(o.roll));
+    roll.rotation.z = Math.PI / 2; roll.position.set(-2.0, 0.45, 0.3); roll.castShadow = true; p.add(roll);   // rolled sleeping bag
+    cyl(p, 0.25, 0.2, 0.5, 0xeeeeee, 0.7, 0, -3.5, 8, true);                    // paper cup
+    return g;
+  }
+  const camps = new THREE.Group();
+  town.add(camps);
+  // Camp 1: on street B's east sidewalk, just past the corner, facing the street; a sitting brown dog beside
+  seatedPerson(camps, CX + HALF + SW / 2 + 0, CZ + HALF + SW + 4, Math.PI / 2, { coat: 0x4b5d3a, pants: 0x2f3a4a, skin: 0xc68642, hat: 0x7a1f1f, blanket: 0x6b7a8f, bag: 0x3d5a3d, roll: 0x4a5a7a });
+  dog(camps, CX + HALF + SW / 2 + 0, CZ + HALF + SW + 9.5, Math.PI / 2, 0xb07a3c, 0xf0e6d2, true, 0);
+  // Camp 2: on street B's west sidewalk toward the site, knees up, with a black and white dog lying next to him
+  seatedPerson(camps, CX - HALF - SW / 2, CZ - HALF - SW - 12, -Math.PI / 2, { coat: 0x5a4a3a, pants: 0x3a3a3a, skin: 0xe0ac69, hat: 0x333333, blanket: 0x8a5a44, bag: 0x2f3f5a, roll: 0x6a4a2a, kneesUp: true });
+  dog(camps, CX - HALF - SW / 2, CZ - HALF - SW - 17.5, -Math.PI / 2, 0x1f1f1f, 0xf4f4f4, false, 2.1);
+
   mergeStatic(town, trafficGroup); // streets, signals and the whole job site: one mesh per material
 
   window.updateTown = updateTown;
-  window.TOWN = { lanes, lights: () => shown, centre: [CX, CZ], half: HALF, setTraffic(on) { trafficOn = on; trafficGroup.visible = on; }, group: town };
+  window.TOWN = { lanes, peds, lights: () => shown, centre: [CX, CZ], half: HALF, setTraffic(on) { trafficOn = on; trafficGroup.visible = on; pedGroup.visible = on; }, group: town, camps };
 })();
